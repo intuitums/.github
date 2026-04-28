@@ -1,13 +1,8 @@
-# Hunt Dynamics
+# Hunt.
 
-Hunt Dynamics is an AI-native software studio building local-first tools, agent control systems, and automation infrastructure for practical work.
+Hunt. is an AI-native software studio building local-first tools, agent control systems, and automation infrastructure for practical work.
 
-We build around a few durable ideas:
-
-- Native tools should feel fast, quiet, and useful every day.
-- Agents should be explicitly summoned, observable, and interruptible.
-- Private operational systems should stay private until they are intentionally prepared for public use.
-- Public projects should be easy for another engineer or agent to understand, run, and extend.
+We care about software that feels calm under pressure: native where it matters, private by default, observable when agents act, and explicit about when control changes hands.
 
 ## Current Work
 
@@ -15,11 +10,11 @@ We build around a few durable ideas:
 - **Pully** - Native macOS pull request dashboard and merge helper.
 - **Whisperline** - Local-first speech capture and transcription workflow.
 - **Edoras** - Safari-focused browser control and page-presence tooling.
-- **Lazuli** - Computer control runtime for supervised desktop actions.
+- **Lazuli** - Supervised computer-control runtime for desktop actions.
 - **Latch** - Native smart clipboard and recall surface.
 - **Veyra** - Social publishing workflow and approval infrastructure.
 
-Most repositories are private while products are in active development. Public releases are sanitized and documented before they are opened.
+Most repositories are private while products are in active development. Public releases are sanitized, documented, and opened intentionally.
 
 ## Principles
 
