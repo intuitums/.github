@@ -20,4 +20,4 @@ Nodus is a workflow runtime built on an LLM-planned graph that recovers from edg
 
 ## Contact
 
-hello@nodus.to
+hi@nodus.to
