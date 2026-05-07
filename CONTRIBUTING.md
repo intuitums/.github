@@ -1,6 +1,6 @@
 # Contributing
 
-HuntDynamics projects ship through reviewed pull requests into `main`.
+Nodus projects ship through reviewed pull requests into `main`.
 
 ## Branches
 

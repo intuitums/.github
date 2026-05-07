@@ -1,26 +1,23 @@
-# HuntDynamics
+# Nodus
 
-HuntDynamics is an AI-native software studio building local-first tools, agent control systems, and automation infrastructure.
+Automation that doesn't break.
 
-We focus on software that makes capable people faster without turning their workflow into a black box.
+Nodus is a workflow runtime built on an LLM-planned graph that recovers from edge cases mid-run. Connect your tools, describe the work, and let it run — when something unexpected shows up, the planner adapts instead of failing the whole job.
 
-## What We Build
+— [nodus.to](https://nodus.to) · [docs.nodus.to](https://docs.nodus.to) · [app.nodus.to](https://app.nodus.to)
 
-- Local-first command centers and agent surfaces
-- Browser and computer control infrastructure
-- Automation systems with explicit approval paths
-- Client-facing web and operational software
+## What lives here
 
-## How We Work
+- The marketing site, docs, and product app ship from the [Nodus](https://github.com/fschrhunt/Nodus) monorepo on the founder's account
+- This org holds shared org-level defaults (this profile, `CONTRIBUTING.md`, `SECURITY.md`, the default PR template)
 
-- Keep permissions tight by default
-- Prefer private repositories until a project is intentionally public
-- Ship through pull requests into `main`
-- Keep secrets out of repos, prompts, and automation logs
-- Verify behavior before calling work done
+## How we work
 
-## For Collaborators
+- Tight permissions by default — repos stay private until they're meant to be public
+- Changes ship through reviewed pull requests into `main`
+- Secrets stay out of repos, prompts, and automation logs
+- Behavior gets verified before work is called done
 
-Access is granted through teams with scoped repository permissions. If you are joining a project, you should receive an invite to the org and the smallest team needed for your work.
+## Contact
 
-Public contact: hello@huntdynamics.co
+hello@nodus.to

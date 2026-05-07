@@ -2,7 +2,7 @@
 
 Please do not open public issues for security reports.
 
-Send security concerns to hello@huntdynamics.co with:
+Send security concerns to hello@nodus.to with:
 
 - The affected repository or service
 - A concise description of the issue
