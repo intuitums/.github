@@ -83,9 +83,11 @@ jobs:
           set -e
           DIFF_LINES=$(gh pr diff "$PR" | wc -l)
           FILES=$(gh pr view "$PR" --json files --jq '.files[].path' | tr '\n' ' ')
+          AUTHOR="${{ github.event.pull_request.user.login }}"
 
-          echo "diff: $DIFF_LINES lines · files: $FILES"
+          echo "diff: $DIFF_LINES lines · files: $FILES · author: $AUTHOR"
 
+          # Sensitive paths → human required, no AI review.
           if echo "$FILES" | grep -qE '(^|/)(auth|billing|stripe|payments?|migrations?/|secrets?|\.env)(/|$)|\.github/workflows/'; then
             echo "verdict=escalate-sensitive" >> $GITHUB_OUTPUT
             gh pr comment "$PR" --body "**AI review tier — skipped (sensitive path)**
@@ -94,6 +96,20 @@ jobs:
             exit 0
           fi
 
+          # Fast-path 1: Dependabot patch-or-minor bumps from grouped PRs.
+          # Title format is "chore(deps): bump the patch group with N updates" etc.
+          # Major bumps (single-package PRs like "bump next from 15 to 16") are NOT covered
+          # — Dependabot only groups same-bump-type, so a group-PR is guaranteed patch/minor.
+          PR_TITLE=$(gh pr view "$PR" --json title --jq '.title')
+          if [[ "$AUTHOR" == *dependabot* ]] && echo "$PR_TITLE" | grep -qE 'bump the (patch|minor) group'; then
+            echo "verdict=dependabot-group-approved" >> $GITHUB_OUTPUT
+            gh pr review "$PR" --approve --body "**AI review tier 1 — Dependabot patch/minor group**
+
+          Auto-approved: Dependabot grouped PRs only contain bumps of the same severity, and patch/minor follow semver. Cloud-tier review skipped to save token budget."
+            exit 0
+          fi
+
+          # Fast-path 2: docs/yaml/config-only small diffs → ask Ollama to confirm.
           NON_DOCS=$(echo "$FILES" | tr ' ' '\n' | grep -vE '\.(md|txt|json5?|ya?ml)$' || true)
           if [ "$DIFF_LINES" -lt 50 ] && [ -z "$NON_DOCS" ]; then
             DIFF=$(gh pr diff "$PR" | head -300)
@@ -121,7 +137,14 @@ jobs:
           $DIFF"
 
             REQUEST_BODY=$(jq -n --arg p "$PROMPT" '{model:"qwen2.5-coder:7b", prompt:$p, stream:false, options:{temperature:0.1}}')
-            RESPONSE=$(curl -s --max-time 60 http://127.0.0.1:11434/api/generate -d "$REQUEST_BODY" | jq -r '.response // ""')
+            # 25s timeout — if Ollama is down or slow, fall through to tier-2 instead of failing.
+            RESPONSE=$(curl -sS --max-time 25 http://127.0.0.1:11434/api/generate -d "$REQUEST_BODY" 2>/dev/null | jq -r '.response // ""' || true)
+
+            if [ -z "$RESPONSE" ]; then
+              echo "::warning::Ollama unreachable — falling through to tier-2 review"
+              echo "verdict=full-review" >> $GITHUB_OUTPUT
+              exit 0
+            fi
 
             VERDICT=$(echo "$RESPONSE" | grep -oE 'VERDICT:[[:space:]]*(YES|NO)' | head -1 | grep -oE '(YES|NO)$')
             REASON=$(echo "$RESPONSE" | grep -A1 -m1 'REASON:' | head -1 | sed -E 's/^REASON:[[:space:]]*//')

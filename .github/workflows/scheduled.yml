@@ -1,0 +1,16 @@
+name: Scheduled org-wide automation
+
+# Org-wide cron-triggered automation. Runs from the .github repo so it
+# doesn't have to be wired into every consumer repo. Calls the reusable
+# stale-pr-sweeper which iterates across all repos.
+
+on:
+  schedule:
+    - cron: '0 13 * * *'  # 8am CST / 13:00 UTC — daily stale-PR sweep
+  workflow_dispatch:
+
+jobs:
+  stale-pr-sweep:
+    uses: ./.github/workflows/stale-pr-sweeper.yml
+    secrets:
+      BOT_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
