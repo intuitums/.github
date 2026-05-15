@@ -1,0 +1,280 @@
+name: Dermerzel Gate
+
+# Hour-scale PR closer for the gap between "automation finished" and
+# "somebody actually landed the PR". Runs as the Dermerzel GitHub App.
+#
+# It is deliberately conservative:
+# - never lands workflow/auth/billing/secrets/migrations/security-tooling changes
+# - never lands failed or pending checks
+# - lands green PRs that are already approved
+# - may approve+land obvious bot PRs (release-please, docs-only, safe dep bumps)
+
+on:
+  workflow_call:
+    inputs:
+      min-age-minutes:
+        description: 'Only inspect PRs idle at least this long'
+        type: number
+        default: 55
+      dry-run:
+        description: 'Report actions without approving or merging'
+        type: boolean
+        default: false
+    secrets:
+      DERMERZEL_APP_ID:
+        required: true
+      DERMERZEL_PRIVATE_KEY:
+        required: true
+  workflow_dispatch:
+    inputs:
+      min-age-minutes:
+        description: 'Only inspect PRs idle at least this long'
+        type: number
+        default: 55
+      dry-run:
+        description: 'Report actions without approving or merging'
+        type: boolean
+        default: true
+  schedule:
+    - cron: '*/15 * * * *'
+
+jobs:
+  gate:
+    runs-on: [self-hosted, server]
+    permissions:
+      contents: read
+    steps:
+      - name: Mint Dermerzel installation token
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.DERMERZEL_APP_ID }}
+          private-key: ${{ secrets.DERMERZEL_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
+      - name: Review idle PRs
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ steps.app-token.outputs.token }}
+          script: |
+            const MIN_AGE_MINUTES = Number('${{ inputs.min-age-minutes || 55 }}');
+            const DRY_RUN = '${{ inputs.dry-run || false }}' === 'true';
+            const ORG = context.repo.owner;
+            const NOW = Date.now();
+            const MARKER = '<!-- dermerzel-gate -->';
+
+            const sensitivePath = /(^|\/)(CODEOWNERS|SECURITY\.md|auth|billing|stripe|payments?|migrations?|secrets?|\.env)(\/|$)|^\.github\/workflows\/|^\.github\/dependabot\.yml$|^\.github\/codeql\//i;
+            const docsConfigOnly = /\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|\.github\/ISSUE_TEMPLATE|\.github\/PULL_REQUEST_TEMPLATE)|^LICENSE$|^CHANGELOG\.md$/i;
+            const releasePleaseFiles = new Set([
+              '.release-please-manifest.json',
+              'CHANGELOG.md',
+              'package.json',
+              'package-lock.json',
+              'pnpm-lock.yaml',
+              'release-please-config.json',
+            ]);
+            const botAuthors = new Set(['dependabot[bot]', 'github-actions[bot]', 'nodus-bot']);
+
+            const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+            async function paginate(fn, params) {
+              return github.paginate(fn, { per_page: 100, ...params });
+            }
+
+            function latestReviewStates(reviews) {
+              const byUser = new Map();
+              for (const review of reviews) {
+                const login = review.user?.login || 'unknown';
+                byUser.set(login, review.state);
+              }
+              return byUser;
+            }
+
+            function semverMajor(version) {
+              const match = String(version || '').match(/^(\d+)\./);
+              return match ? Number(match[1]) : null;
+            }
+
+            function dependabotLooksSafe(pr, body) {
+              const title = pr.title || '';
+              if (/major group|major update|\bmajor\b/i.test(title)) return false;
+              if (/install script changes/i.test(body || '')) return false;
+              const range = title.match(/from\s+v?(\d+\.\d+\.\d+[^\s]*)\s+to\s+v?(\d+\.\d+\.\d+[^\s]*)/i);
+              if (range) {
+                const fromMajor = semverMajor(range[1]);
+                const toMajor = semverMajor(range[2]);
+                if (fromMajor !== null && toMajor !== null && fromMajor !== toMajor) return false;
+              }
+              return /patch group|minor group|security|from\s+v?\d+\.\d+\.\d+\s+to\s+v?\d+\.\d+\.\d+/i.test(title + '\n' + (body || ''));
+            }
+
+            async function ensureComment(owner, repo, number, token, body) {
+              const comments = await paginate(github.rest.issues.listComments, { owner, repo, issue_number: number });
+              const existing = comments.find(c => c.body && c.body.includes(token));
+              if (existing) return 'already-commented';
+              if (DRY_RUN) return 'dry-comment';
+              await github.rest.issues.createComment({ owner, repo, issue_number: number, body });
+              return 'commented';
+            }
+
+            async function inspectPr(repo, pr) {
+              const owner = ORG;
+              const repoName = repo.name;
+              const number = pr.number;
+              const ageMinutes = (NOW - new Date(pr.updated_at).getTime()) / 60000;
+              const label = `${owner}/${repoName}#${number}`;
+
+              if (pr.draft || ageMinutes < MIN_AGE_MINUTES) return { label, action: 'skip', reason: 'not old enough or draft' };
+
+              const [files, reviews, comments, checks, statuses] = await Promise.all([
+                paginate(github.rest.pulls.listFiles, { owner, repo: repoName, pull_number: number }),
+                paginate(github.rest.pulls.listReviews, { owner, repo: repoName, pull_number: number }),
+                paginate(github.rest.issues.listComments, { owner, repo: repoName, issue_number: number }),
+                github.rest.checks.listForRef({ owner, repo: repoName, ref: pr.head.sha, per_page: 100 }),
+                github.rest.repos.getCombinedStatusForRef({ owner, repo: repoName, ref: pr.head.sha }),
+              ]);
+
+              const fileNames = files.map(f => f.filename);
+              const touchesSensitive = fileNames.some(name => sensitivePath.test(name));
+              const changedLines = files.reduce((sum, f) => sum + (f.changes || 0), 0);
+              const allDocsConfig = fileNames.length > 0 && fileNames.every(name => docsConfigOnly.test(name));
+              const releasePlease = pr.user?.login === 'github-actions[bot]' && fileNames.length > 0 && fileNames.every(name => releasePleaseFiles.has(name));
+              const depSafe = pr.user?.login === 'dependabot[bot]' && dependabotLooksSafe(pr, pr.body || '');
+              const botAuthored = botAuthors.has(pr.user?.login || '');
+
+              const checkRuns = checks.data.check_runs || [];
+              const failedChecks = checkRuns.filter(c => ['failure', 'timed_out', 'cancelled', 'action_required', 'startup_failure'].includes(c.conclusion));
+              const pendingChecks = checkRuns.filter(c => c.status !== 'completed');
+              const legacyState = statuses.data.state;
+
+              const latestReviews = latestReviewStates(reviews);
+              const hasApproval = [...latestReviews.values()].includes('APPROVED');
+              const hasChangeRequest = [...latestReviews.values()].includes('CHANGES_REQUESTED');
+              const aiApproved = reviews.some(r =>
+                r.state === 'APPROVED' &&
+                /AI review|Ollama|Claude|Codex|Dermerzel/i.test(r.body || '')
+              );
+              const alreadyDermerzelReviewed = reviews.some(r => r.user?.login?.includes('dermerzel') && r.state === 'APPROVED');
+              const alreadyActed = comments.some(c => c.body && c.body.includes(MARKER));
+
+              if (touchesSensitive) {
+                const token = `${MARKER}:human-review:${pr.head.sha}`;
+                const checkSummary = pendingChecks.length > 0
+                  ? `Pending: ${pendingChecks.map(c => c.name).join(', ')}`
+                  : failedChecks.length > 0
+                    ? `Failed: ${failedChecks.map(c => `${c.name} (${c.conclusion})`).join(', ')}`
+                    : checkRuns.length > 0
+                      ? 'All visible check runs are complete and green.'
+                      : `No check runs visible yet; legacy status is ${legacyState}.`;
+                const reviewSummary = hasApproval
+                  ? 'At least one approval is present.'
+                  : hasChangeRequest
+                    ? 'A review requested changes.'
+                    : 'No approval is present yet.';
+                const fileSummary = files
+                  .map(f => `- \`${f.filename}\` — ${f.status}, +${f.additions}/-${f.deletions}`)
+                  .join('\n');
+                const body = [
+                  token,
+                  '**Dermerzel Gate — human review packet**',
+                  '',
+                  `This PR has been idle for ${Math.floor(ageMinutes)} minutes and touches protected territory, so I will not approve or merge it automatically. This is the packet for Fischer to read before pushing it through.`,
+                  '',
+                  '**Why human-only**',
+                  '- Protected path match: workflow/auth/billing/secrets/migrations/security-sensitive rule',
+                  `- Author: \`${pr.user?.login || 'unknown'}\``,
+                  `- Changed lines: ${changedLines}`,
+                  '',
+                  '**Files changed**',
+                  fileSummary,
+                  '',
+                  '**Automation state**',
+                  `- Checks: ${checkSummary}`,
+                  `- Reviews: ${reviewSummary}`,
+                  `- Mergeability: GitHub reports \`${pr.mergeable_state || 'unknown'}\` from the listing snapshot`,
+                  '',
+                  '**What to verify before merge**',
+                  '- The workflow/security change cannot grant broader token permissions than intended',
+                  '- It cannot bypass the human-only gates for sensitive paths',
+                  '- It does not introduce secret exposure or unsafe self-hosted-runner behavior',
+                  '- The PR description matches the actual diff',
+                  '',
+                  'If those are clean, this is yours to approve/merge manually.',
+                ].join('\n');
+                const result = await ensureComment(owner, repoName, number, token, body);
+                return { label, action: result, reason: 'sensitive path human packet' };
+              }
+
+              if (pendingChecks.length > 0) return { label, action: 'skip', reason: `pending checks: ${pendingChecks.map(c => c.name).join(', ')}` };
+              if (failedChecks.length > 0 || legacyState === 'failure' || legacyState === 'error') {
+                const token = `${MARKER}:checks-failed:${pr.head.sha}`;
+                const names = failedChecks.map(c => `- ${c.name}: ${c.conclusion}`).join('\n') || `- legacy commit status: ${legacyState}`;
+                const result = await ensureComment(owner, repoName, number, token, `${token}\n**Dermerzel Gate — blocked by checks**\n\nThis PR has been idle for ${Math.floor(ageMinutes)} minutes, but checks are not green:\n\n${names}\n\nI am not merging until the run is clean.`);
+                return { label, action: result, reason: 'checks failed' };
+              }
+              if (checkRuns.length === 0 && legacyState === 'pending') return { label, action: 'skip', reason: 'no completed checks yet' };
+              if (hasChangeRequest) return { label, action: 'skip', reason: 'changes requested' };
+
+              const safeWithoutPriorApproval = releasePlease || depSafe || (botAuthored && allDocsConfig && changedLines <= 80);
+              const eligible = hasApproval || aiApproved || safeWithoutPriorApproval;
+
+              if (!eligible) {
+                if (!alreadyActed) {
+                  const token = `${MARKER}:review-needed:${pr.head.sha}`;
+                  const result = await ensureComment(owner, repoName, number, token, `${token}\n**Dermerzel Gate — review needed**\n\nThis PR has been idle for ${Math.floor(ageMinutes)} minutes and checks appear settled, but I do not see a safe approval path yet.\n\nI need one of these before merging:\n- passing AI/human approval, or\n- an obvious safe bot PR shape such as release-please, docs-only, or safe patch/minor dependency update.`);
+                  return { label, action: result, reason: 'needs review' };
+                }
+                return { label, action: 'skip', reason: 'needs review, already commented' };
+              }
+
+              const { data: fresh } = await github.rest.pulls.get({ owner, repo: repoName, pull_number: number });
+              if (['dirty', 'unknown', 'draft'].includes(fresh.mergeable_state)) return { label, action: 'skip', reason: `mergeable_state=${fresh.mergeable_state}` };
+
+              if (DRY_RUN) return { label, action: 'dry-merge', reason: safeWithoutPriorApproval ? 'would approve+merge' : 'would merge' };
+
+              if (safeWithoutPriorApproval && !hasApproval && !alreadyDermerzelReviewed) {
+                await github.rest.pulls.createReview({
+                  owner,
+                  repo: repoName,
+                  pull_number: number,
+                  event: 'APPROVE',
+                  body: `**Dermerzel Gate — approved**\n\nSafe automated lane: ${releasePlease ? 'release-please version PR' : depSafe ? 'safe dependency update' : 'small bot-authored docs/config change'}. Checks are green and no protected paths changed.`,
+                });
+                await sleep(1500);
+              }
+
+              await github.rest.pulls.merge({
+                owner,
+                repo: repoName,
+                pull_number: number,
+                merge_method: 'squash',
+                commit_title: `${pr.title} (#${number})`,
+              });
+              return { label, action: 'merged', reason: safeWithoutPriorApproval ? 'approved+merged' : 'approved checks green' };
+            }
+
+            const repos = await paginate(github.rest.repos.listForOrg, { org: ORG, type: 'all' });
+            const results = [];
+            for (const repo of repos) {
+              if (repo.archived || repo.disabled) continue;
+              const prs = await paginate(github.rest.pulls.list, { owner: ORG, repo: repo.name, state: 'open' });
+              for (const pr of prs) {
+                try {
+                  const result = await inspectPr(repo, pr);
+                  if (result.action !== 'skip') results.push(result);
+                  console.log(`${result.label}: ${result.action} — ${result.reason}`);
+                } catch (error) {
+                  const label = `${ORG}/${repo.name}#${pr.number}`;
+                  results.push({ label, action: 'error', reason: error.message });
+                  core.warning(`${label}: ${error.stack || error.message}`);
+                }
+              }
+            }
+
+            const summary = results.length
+              ? results.map(r => `- ${r.label}: **${r.action}** — ${r.reason}`).join('\n')
+              : 'No idle PRs needed Dermerzel Gate action.';
+            await core.summary
+              .addHeading(`Dermerzel Gate${DRY_RUN ? ' (dry run)' : ''}`)
+              .addRaw(summary)
+              .write();
