@@ -1,0 +1,174 @@
+name: Dep check (reusable)
+
+# Daily replacement for Dependabot's flood of version-update PRs. Runs
+# `pnpm outdated` and maintains a single issue per repo with the current
+# snapshot grouped by patch / minor / major.
+#
+# Smart-update: the issue is only updated (and only emails the assignee)
+# when the bump list actually changes since the last run. No-change days
+# are silent.
+#
+# Dependabot SECURITY updates remain enabled at the org level — those
+# still open individual PRs only when a real CVE drops against a dep.
+
+on:
+  workflow_call:
+    inputs:
+      assignee:
+        description: 'GitHub username to assign the daily dep-check issue to'
+        type: string
+        default: fschrhunt
+
+jobs:
+  check:
+    runs-on: [self-hosted, server]
+    permissions:
+      issues: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run pnpm outdated
+        run: |
+          set +e
+          pnpm outdated --format=json --long > outdated.json 2>/dev/null
+          set -e
+          [ -s outdated.json ] || echo "{}" > outdated.json
+
+      - uses: actions/github-script@v7
+        env:
+          ASSIGNEE: ${{ inputs.assignee }}
+        with:
+          script: |
+            const fs = require('fs');
+            const outdated = JSON.parse(fs.readFileSync('outdated.json', 'utf8'));
+            const assignee = process.env.ASSIGNEE;
+
+            const bumpKind = (current, latest) => {
+              const [a, b] = current.split('.').map(Number);
+              const [x, y] = latest.split('.').map(Number);
+              if (a !== x) return 'major';
+              if (b !== y) return 'minor';
+              return 'patch';
+            };
+
+            const groups = { major: [], minor: [], patch: [] };
+            for (const [name, info] of Object.entries(outdated)) {
+              const current = info.current;
+              const latest = info.latest || info.wanted;
+              if (!current || !latest || current === latest) continue;
+              groups[bumpKind(current, latest)].push({ name, current, latest, type: info.dependencyType });
+            }
+            for (const k of Object.keys(groups)) {
+              groups[k].sort((a, b) => a.name.localeCompare(b.name));
+            }
+
+            const count = groups.major.length + groups.minor.length + groups.patch.length;
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'dependencies',
+              per_page: 100,
+            });
+            const existing = issues.find(i =>
+              i.title.startsWith('Daily dep check') || i.title.startsWith('Weekly dep check')
+            );
+
+            // Fingerprint of the bump set — used to detect "did anything change?"
+            const fingerprint = JSON.stringify({
+              major: groups.major.map(i => `${i.name}@${i.current}>${i.latest}`),
+              minor: groups.minor.map(i => `${i.name}@${i.current}>${i.latest}`),
+              patch: groups.patch.map(i => `${i.name}@${i.current}>${i.latest}`),
+            });
+            const fpMarker = `<!-- dep-check-fingerprint: ${fingerprint} -->`;
+
+            if (count === 0) {
+              if (existing) {
+                await github.rest.issues.update({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: existing.number,
+                  state: 'closed',
+                  state_reason: 'completed',
+                });
+                console.log(`Closed stale issue #${existing.number} — nothing outdated.`);
+              } else {
+                console.log('Nothing outdated. No issue opened.');
+              }
+              return;
+            }
+
+            const unchanged = existing && existing.body && existing.body.includes(fpMarker);
+
+            const renderGroup = (label, items) => {
+              if (!items.length) return '';
+              const lines = items
+                .map(i => `- [ ] \`${i.name}\` \`${i.current}\` → \`${i.latest}\`${i.type === 'devDependencies' ? ' _(dev)_' : ''}`)
+                .join('\n');
+              return `\n### ${label} (${items.length})\n\n${lines}\n`;
+            };
+
+            const date = new Date().toISOString().split('T')[0];
+            const title = `Daily dep check — ${date}`;
+            const summary = [
+              groups.major.length && `${groups.major.length} major`,
+              groups.minor.length && `${groups.minor.length} minor`,
+              groups.patch.length && `${groups.patch.length} patch`,
+            ].filter(Boolean).join(' · ');
+
+            const body = [
+              fpMarker,
+              `## ${count} package${count === 1 ? '' : 's'} have updates available`,
+              ``,
+              `_${summary}_`,
+              renderGroup('Major (review changelog — breaking changes possible)', groups.major),
+              renderGroup('Minor', groups.minor),
+              renderGroup('Patch', groups.patch),
+              ``,
+              `---`,
+              ``,
+              `**How to use this issue:**`,
+              `- Comment \`@claude bump <package>\` to have Claude open a focused PR`,
+              `- Or run \`pnpm up <package>\` locally and PR the result`,
+              `- Check boxes as you handle each one — issue auto-closes when nothing is outdated`,
+              ``,
+              `_Generated by nodus-bot · runs daily 09:00 CT. You only get emailed when the list changes._`,
+            ].join('\n');
+
+            if (existing) {
+              if (unchanged) {
+                console.log(`No change since last run (#${existing.number}) — skipping update to avoid email.`);
+                return;
+              }
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existing.number,
+                title,
+                body,
+                assignees: [assignee],
+              });
+              console.log(`Updated issue #${existing.number} — bump list changed.`);
+            } else {
+              const { data: created } = await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title,
+                body,
+                labels: ['dependencies'],
+                assignees: [assignee],
+              });
+              console.log(`Opened issue #${created.number}`);
+            }
