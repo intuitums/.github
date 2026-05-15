@@ -15,6 +15,8 @@ on:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
+      NODUS_BOT_PAT:
+        required: true
 
 jobs:
   # ────────────────────────────────────────────────────────────────────────
@@ -33,7 +35,7 @@ jobs:
     steps:
       - name: Drop fschrhunt from requested reviewers
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
         run: |
           PR=${{ github.event.pull_request.number }}
           REPO=${{ github.repository }}
@@ -52,7 +54,7 @@ jobs:
       pull-requests: write
     env:
       PR: ${{ github.event.pull_request.number }}
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -110,8 +112,10 @@ jobs:
           fi
 
           # Fast-path 2: docs/yaml/config-only small diffs → ask Ollama to confirm.
+          # Lockfiles are excluded explicitly — they match .yaml/.json but are CODE, not docs.
           NON_DOCS=$(echo "$FILES" | tr ' ' '\n' | grep -vE '\.(md|txt|json5?|ya?ml)$' || true)
-          if [ "$DIFF_LINES" -lt 50 ] && [ -z "$NON_DOCS" ]; then
+          LOCKFILE_TOUCHED=$(echo "$FILES" | tr ' ' '\n' | grep -E '(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock|poetry\.lock|uv\.lock|go\.sum)$' || true)
+          if [ "$DIFF_LINES" -lt 50 ] && [ -z "$NON_DOCS" ] && [ -z "$LOCKFILE_TOUCHED" ]; then
             DIFF=$(gh pr diff "$PR" | head -300)
 
             PROMPT="You are the FIRST tier in a 3-tier PR review system. You are NOT the only reviewer.
@@ -181,6 +185,7 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.NODUS_BOT_PAT }}
           claude_args: |
             --allowedTools "Bash(gh pr review:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh api:*)"
           prompt: |
@@ -223,7 +228,7 @@ jobs:
       pull-requests: write
     env:
       PR: ${{ github.event.pull_request.number }}
-      GH_TOKEN: ${{ github.token }}
+      GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -236,7 +241,7 @@ jobs:
 
       - name: Codex review
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
         run: |
           set -e
           TITLE=$(gh pr view "$PR" --json title --jq '.title')
@@ -310,7 +315,10 @@ jobs:
           fi
 
   arm-automerge:
-    if: github.event.pull_request.draft == false
+    needs: triage
+    if: |
+      github.event.pull_request.draft == false &&
+      needs.triage.outputs.verdict != 'escalate-sensitive'
     runs-on: [self-hosted, server]
     permissions:
       pull-requests: write
@@ -318,7 +326,7 @@ jobs:
     steps:
       - name: Arm auto-merge (squash)
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
         run: |
           gh pr merge "${{ github.event.pull_request.number }}" \
             --repo "${{ github.repository }}" \

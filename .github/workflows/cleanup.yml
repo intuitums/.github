@@ -1,0 +1,181 @@
+name: Cleanup (reusable)
+
+# Ground crew for every PR. Runs BEFORE review/automerge and tidies the
+# diff so reviewers (AI or human) see a clean change:
+#   - resync lockfile if drifted
+#   - lint --fix
+#   - format
+#   - flag scratch-debug leftovers (warn, don't auto-strip)
+#   - flag empty PR description (warn)
+#
+# Auto-fixed changes are committed and pushed AS nodus-bot. The push
+# triggers `pull_request: synchronize`, which re-runs CI against the
+# clean state. The skip-check at the top prevents an infinite loop.
+
+on:
+  workflow_call:
+    secrets:
+      NODUS_BOT_PAT:
+        required: true
+
+jobs:
+  cleanup:
+    if: github.event.pull_request.draft == false
+    runs-on: [self-hosted, server]
+    permissions:
+      contents: write
+      pull-requests: write
+    env:
+      PR: ${{ github.event.pull_request.number }}
+      GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.NODUS_BOT_PAT }}
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - id: skip
+        name: Skip if HEAD is already a cleanup commit
+        run: |
+          LAST_AUTHOR=$(git log -1 --pretty=format:'%an')
+          LAST_MSG=$(git log -1 --pretty=format:'%s')
+          if [ "$LAST_AUTHOR" = "nodus-bot" ] || [[ "$LAST_MSG" == chore\(cleanup\):* ]]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "→ HEAD is a cleanup commit ($LAST_AUTHOR · $LAST_MSG) — nothing to do"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: pm
+        name: Detect package manager
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "pm=pnpm" >> "$GITHUB_OUTPUT"
+          elif [ -f package-lock.json ]; then
+            echo "pm=npm" >> "$GITHUB_OUTPUT"
+          else
+            echo "pm=none" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Detected: $(grep pm= "$GITHUB_OUTPUT")"
+
+      - uses: actions/setup-node@v6
+        if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
+        with:
+          node-version-file: .nvmrc
+          cache: ${{ steps.pm.outputs.pm }}
+
+      - uses: pnpm/action-setup@v6
+        if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
+
+      - name: Resync lockfile (pnpm)
+        if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Resync lockfile (npm)
+        if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm'
+        run: npm install
+
+      - name: Lint --fix
+        if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
+        continue-on-error: true
+        run: |
+          if jq -e '.scripts.lint' package.json >/dev/null 2>&1; then
+            if [ "${{ steps.pm.outputs.pm }}" = "pnpm" ]; then
+              pnpm lint --fix || pnpm lint -- --fix || true
+            else
+              npm run lint -- --fix || true
+            fi
+          else
+            echo "→ no 'lint' script, skipping"
+          fi
+
+      - name: Format
+        if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
+        continue-on-error: true
+        run: |
+          for script in format format:fix prettier; do
+            if jq -e ".scripts.\"$script\"" package.json >/dev/null 2>&1; then
+              echo "→ running $script"
+              if [ "${{ steps.pm.outputs.pm }}" = "pnpm" ]; then
+                pnpm "$script" || true
+              else
+                npm run "$script" || true
+              fi
+              break
+            fi
+          done
+
+      - name: Commit and push auto-fixes
+        id: commit
+        if: steps.skip.outputs.skip != 'true'
+        run: |
+          git config user.name "nodus-bot"
+          git config user.email "216606822+nodus-bot@users.noreply.github.com"
+
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "→ no auto-fix changes needed"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          git add -A
+          git commit -m "chore(cleanup): auto-fix lockfile/lint/format"
+
+          # Push via PAT so it triggers downstream workflow runs.
+          git push \
+            "https://x-access-token:${{ secrets.NODUS_BOT_PAT }}@github.com/${{ github.repository }}.git" \
+            "HEAD:${{ github.event.pull_request.head.ref }}"
+          echo "pushed=true" >> "$GITHUB_OUTPUT"
+          echo "→ pushed cleanup commit; new CI run will pick it up"
+
+      # ────────────────────────────────────────────────────────────────────
+      # Non-blocking warnings — surfaced as PR comments so reviewers see
+      # them, but do NOT block merge. Cleanup that humans should do.
+      # ────────────────────────────────────────────────────────────────────
+      - name: Warn on empty PR description
+        if: steps.skip.outputs.skip != 'true' && github.event.action == 'opened'
+        continue-on-error: true
+        run: |
+          BODY=$(gh pr view "$PR" --json body --jq '.body // ""')
+          # Strip HTML comments to see the actual content.
+          VISIBLE=$(echo "$BODY" | sed -E 's/<!--[^>]*-->//g' | tr -d '[:space:]')
+          if [ -z "$VISIBLE" ]; then
+            gh pr comment "$PR" --body "<!-- cleanup:empty-description -->
+          **Cleanup — empty PR description**
+
+          The PR description is empty. Please fill in **Summary** and **Verification** so reviewers (AI or human) have context."
+          fi
+
+      - name: Warn on scratch debug
+        if: steps.skip.outputs.skip != 'true' && github.event.action == 'opened'
+        continue-on-error: true
+        run: |
+          DIFF=$(gh pr diff "$PR")
+          FINDINGS=""
+          declare -A PATTERNS=(
+            ["console.log"]='console\.log'
+            ["console.debug"]='console\.debug'
+            ["debugger"]='\bdebugger;?'
+            [".only("]='\.(it|describe|test)\.only\('
+            [".skip("]='\.(it|describe|test)\.skip\('
+            ["TODO: remove"]='TODO:?\s*remove'
+            ["XXX"]='\bXXX\b'
+            ["dbg!"]='dbg!\('
+          )
+          for label in "${!PATTERNS[@]}"; do
+            pattern="${PATTERNS[$label]}"
+            count=$(echo "$DIFF" | grep -cE "^\+[^+].*${pattern}" || true)
+            if [ "${count:-0}" -gt 0 ]; then
+              FINDINGS="${FINDINGS}
+          - \`${label}\` (${count} occurrence$([ "$count" = "1" ] || echo s))"
+            fi
+          done
+          if [ -n "$FINDINGS" ]; then
+            gh pr comment "$PR" --body "<!-- cleanup:scratch-debug -->
+          **Cleanup — scratch debug in diff**
+          $FINDINGS
+
+          Please remove these before merge. _Not blocking — surfaced for awareness._"
+          fi

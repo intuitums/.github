@@ -13,6 +13,9 @@ on:
       manifest-file:
         type: string
         default: .release-please-manifest.json
+    secrets:
+      NODUS_BOT_PAT:
+        required: true
 
 jobs:
   release-please:
@@ -22,8 +25,11 @@ jobs:
       pull-requests: write
       id-token: write
     steps:
+      # Use NODUS_BOT_PAT, not the default GITHUB_TOKEN, so release PRs are
+      # authored by nodus-bot — github-actions[bot] PRs do NOT trigger
+      # downstream workflow runs, so CI would never run on release PRs.
       - uses: googleapis/release-please-action@v5
         with:
-          token: ${{ github.token }}
+          token: ${{ secrets.NODUS_BOT_PAT }}
           config-file: ${{ inputs.config-file }}
           manifest-file: ${{ inputs.manifest-file }}

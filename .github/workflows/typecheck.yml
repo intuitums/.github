@@ -14,6 +14,8 @@ on:
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         required: true
+      NODUS_BOT_PAT:
+        required: true
 
 jobs:
   check:
@@ -40,7 +42,9 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED"
           NON_DOCS=$(echo "$CHANGED" | grep -vE '\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|\.github)/|^LICENSE|^CHANGELOG' || true)
-          if [ -z "$NON_DOCS" ] && [ -n "$CHANGED" ]; then
+          # Lockfiles match .yaml/.json but are CODE — never skip if they changed.
+          LOCKFILE_TOUCHED=$(echo "$CHANGED" | grep -E '(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock|poetry\.lock|uv\.lock|go\.sum)$' || true)
+          if [ -z "$NON_DOCS" ] && [ -z "$LOCKFILE_TOUCHED" ] && [ -n "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "→ docs/config-only, skipping typecheck"
           else
@@ -92,6 +96,7 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.NODUS_BOT_PAT }}
           prompt: |
             CI just failed on this PR. Read the failed step's logs
             (use `gh run view ${{ github.run_id }} --log-failed`),

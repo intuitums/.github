@@ -17,6 +17,9 @@ on:
         description: 'GitHub username to assign the daily dep-check issue to'
         type: string
         default: fschrhunt
+    secrets:
+      NODUS_BOT_PAT:
+        required: true
 
 jobs:
   check:
@@ -87,6 +90,7 @@ jobs:
         env:
           ASSIGNEE: ${{ inputs.assignee }}
         with:
+          github-token: ${{ secrets.NODUS_BOT_PAT }}
           script: |
             const fs = require('fs');
             const outdated = JSON.parse(fs.readFileSync('outdated.json', 'utf8'));
