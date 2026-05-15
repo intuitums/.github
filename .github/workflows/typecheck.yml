@@ -1,14 +1,14 @@
 name: Typecheck (reusable)
 
-# Reusable workflow: `pnpm install` + `pnpm <command>` with Claude auto-fix on failure.
-# Skips the actual typecheck step when a PR only changes docs / yaml / config
-# files — those can't break the type-system so we don't gate them on CI.
+# Reusable workflow: install deps + run `<pm> <command>` with Claude auto-fix
+# on failure. Skips entirely for docs / yaml / config-only PRs. Auto-detects
+# the package manager via lockfile (pnpm > npm).
 
 on:
   workflow_call:
     inputs:
       command:
-        description: 'pnpm script to run (e.g. "typecheck", "build", "test")'
+        description: 'pnpm/npm script to run (e.g. "typecheck", "build", "test")'
         type: string
         default: 'typecheck'
     secrets:
@@ -39,7 +39,6 @@ jobs:
           CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" 2>/dev/null || echo "")
           echo "Changed files:"
           echo "$CHANGED"
-          # Strip docs/yaml/config-only paths; if nothing is left, skip the typecheck.
           NON_DOCS=$(echo "$CHANGED" | grep -vE '\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|\.github)/|^LICENSE|^CHANGELOG' || true)
           if [ -z "$NON_DOCS" ] && [ -n "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
@@ -49,22 +48,43 @@ jobs:
             echo "→ code changes present, running typecheck"
           fi
 
-      - uses: pnpm/action-setup@v6
+      - id: pm
+        name: Detect package manager
         if: steps.changes.outputs.skip != 'true'
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "pm=pnpm" >> "$GITHUB_OUTPUT"
+          elif [ -f package-lock.json ]; then
+            echo "pm=npm" >> "$GITHUB_OUTPUT"
+          else
+            echo "pm=none" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Detected: $(cat $GITHUB_OUTPUT | grep pm=)"
 
       - uses: actions/setup-node@v6
-        if: steps.changes.outputs.skip != 'true'
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          cache: ${{ steps.pm.outputs.pm }}
 
-      - name: Install dependencies
-        if: steps.changes.outputs.skip != 'true'
+      - uses: pnpm/action-setup@v6
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
+
+      - name: Install dependencies (pnpm)
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
         run: pnpm install --frozen-lockfile
 
-      - name: Run "${{ inputs.command }}"
-        if: steps.changes.outputs.skip != 'true'
+      - name: Install dependencies (npm)
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm'
+        run: npm ci
+
+      - name: Run "${{ inputs.command }}" (pnpm)
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
         run: pnpm ${{ inputs.command }}
+
+      - name: Run "${{ inputs.command }}" (npm)
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm'
+        run: npm run ${{ inputs.command }}
 
       - name: Auto-fix with Claude on failure
         if: failure() && steps.changes.outputs.skip != 'true'

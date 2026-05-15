@@ -2,7 +2,7 @@ name: Security (reusable)
 
 # Reusable security scans. Runs on every PR alongside typecheck.
 #   - gitleaks: detects committed secrets (free alternative to GHAS push protection)
-#   - pnpm audit: flags high-severity advisories in production deps
+#   - audit: flags high-severity advisories in production deps (npm or pnpm)
 #
 # Separated from typecheck.yml so a security failure does NOT trigger
 # the Claude auto-fix step (these failures want human attention).
@@ -15,7 +15,7 @@ on:
         default: '8.27.2'
       audit-level:
         type: string
-        description: 'pnpm audit minimum severity that fails the job'
+        description: 'audit minimum severity that fails the job'
         default: 'high'
 
 jobs:
@@ -44,22 +44,46 @@ jobs:
             --source . \
             --verbose
 
-  pnpm-audit:
+  audit:
     runs-on: [self-hosted, server]
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v6
 
-      - uses: pnpm/action-setup@v6
+      - id: pm
+        name: Detect package manager
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            echo "pm=pnpm" >> "$GITHUB_OUTPUT"
+          elif [ -f package-lock.json ]; then
+            echo "pm=npm" >> "$GITHUB_OUTPUT"
+          else
+            echo "pm=none" >> "$GITHUB_OUTPUT"
+          fi
+          echo "Detected: $(cat $GITHUB_OUTPUT | grep pm=)"
 
       - uses: actions/setup-node@v6
+        if: steps.pm.outputs.pm != 'none'
         with:
           node-version-file: .nvmrc
-          cache: pnpm
+          cache: ${{ steps.pm.outputs.pm }}
 
-      - name: Install dependencies
+      - uses: pnpm/action-setup@v6
+        if: steps.pm.outputs.pm == 'pnpm'
+
+      - name: Install deps (pnpm)
+        if: steps.pm.outputs.pm == 'pnpm'
         run: pnpm install --frozen-lockfile
 
-      - name: pnpm audit (production deps, ${{ inputs.audit-level }}+ severity)
+      - name: Install deps (npm)
+        if: steps.pm.outputs.pm == 'npm'
+        run: npm ci
+
+      - name: Audit (pnpm, ${{ inputs.audit-level }}+ severity, prod only)
+        if: steps.pm.outputs.pm == 'pnpm'
         run: pnpm audit --prod --audit-level=${{ inputs.audit-level }}
+
+      - name: Audit (npm, ${{ inputs.audit-level }}+ severity, prod only)
+        if: steps.pm.outputs.pm == 'npm'
+        run: npm audit --omit=dev --audit-level=${{ inputs.audit-level }}
