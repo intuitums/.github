@@ -1,7 +1,8 @@
 name: Typecheck (reusable)
 
 # Reusable workflow: `pnpm install` + `pnpm <command>` with Claude auto-fix on failure.
-# Used by every getnodus repo's ci.yml.
+# Skips the actual typecheck step when a PR only changes docs / yaml / config
+# files — those can't break the type-system so we don't gate them on CI.
 
 on:
   workflow_call:
@@ -27,21 +28,46 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.ref }}
 
+      - id: changes
+        name: Detect docs-only / config-only changes
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -e
+          git fetch --depth=50 origin "$BASE_SHA" 2>/dev/null || true
+          CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" 2>/dev/null || echo "")
+          echo "Changed files:"
+          echo "$CHANGED"
+          # Strip docs/yaml/config-only paths; if nothing is left, skip the typecheck.
+          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|\.github)/|^LICENSE|^CHANGELOG' || true)
+          if [ -z "$NON_DOCS" ] && [ -n "$CHANGED" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "→ docs/config-only, skipping typecheck"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "→ code changes present, running typecheck"
+          fi
+
       - uses: pnpm/action-setup@v6
+        if: steps.changes.outputs.skip != 'true'
 
       - uses: actions/setup-node@v6
+        if: steps.changes.outputs.skip != 'true'
         with:
           node-version-file: .nvmrc
           cache: pnpm
 
       - name: Install dependencies
+        if: steps.changes.outputs.skip != 'true'
         run: pnpm install --frozen-lockfile
 
       - name: Run "${{ inputs.command }}"
+        if: steps.changes.outputs.skip != 'true'
         run: pnpm ${{ inputs.command }}
 
       - name: Auto-fix with Claude on failure
-        if: failure()
+        if: failure() && steps.changes.outputs.skip != 'true'
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
