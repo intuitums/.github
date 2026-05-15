@@ -17,6 +17,30 @@ on:
         required: true
 
 jobs:
+  # ────────────────────────────────────────────────────────────────────────
+  # Drop @fschrhunt's auto-review-request when the PR was opened by a bot
+  # (Dependabot, release-please, github-actions). CODEOWNERS would otherwise
+  # email him on every bot PR — those are routine and should flow silently.
+  # Human-authored and nodus-bot-authored PRs keep the review request.
+  # ────────────────────────────────────────────────────────────────────────
+  dismiss-bot-review-request:
+    if: |
+      github.event.action == 'opened' &&
+      contains(fromJSON('["dependabot[bot]","github-actions[bot]","app/dependabot","app/github-actions"]'), github.event.pull_request.user.login)
+    runs-on: [self-hosted, server]
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Drop fschrhunt from requested reviewers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          PR=${{ github.event.pull_request.number }}
+          REPO=${{ github.repository }}
+          gh api -X DELETE "repos/$REPO/pulls/$PR/requested_reviewers" \
+            -f 'reviewers[]=fschrhunt' 2>&1 | tail -3 || true
+          echo "Dismissed review request for bot PR by ${{ github.event.pull_request.user.login }}"
+
   triage:
     if: github.event.pull_request.draft == false
     runs-on: [self-hosted, server]
