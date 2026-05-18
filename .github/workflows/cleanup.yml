@@ -63,11 +63,13 @@ jobs:
       - uses: actions/setup-node@v6
         if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
         with:
-          node-version-file: .nvmrc
+          node-version: '22'
           cache: ${{ steps.pm.outputs.pm }}
 
       - uses: pnpm/action-setup@v6
         if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
 
       - name: Resync lockfile (pnpm)
         if: steps.skip.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
