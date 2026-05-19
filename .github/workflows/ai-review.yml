@@ -53,6 +53,7 @@ jobs:
     env:
       PR: ${{ github.event.pull_request.number }}
       GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
+      OLLAMA_MODEL: qwen2.5-coder:7b
     steps:
       - uses: actions/checkout@v6
         with:
@@ -138,7 +139,7 @@ jobs:
           PR diff:
           $DIFF"
 
-            REQUEST_BODY=$(jq -n --arg p "$PROMPT" '{model:"qwen2.5-coder:7b", prompt:$p, stream:false, options:{temperature:0.1}}')
+            REQUEST_BODY=$(jq -n --arg model "$OLLAMA_MODEL" --arg p "$PROMPT" '{model:$model, prompt:$p, stream:false, options:{temperature:0.1}}')
             # 25s timeout — if Ollama is down or slow, fall through to tier-2 instead of failing.
             RESPONSE=$(curl -sS --max-time 25 http://127.0.0.1:11434/api/generate -d "$REQUEST_BODY" 2>/dev/null | jq -r '.response // ""' || true)
 
@@ -155,7 +156,7 @@ jobs:
 
             if [ "$VERDICT" = "YES" ]; then
               echo "verdict=ollama-approved" >> $GITHUB_OUTPUT
-              gh pr review "$PR" --approve --body "**AI review tier 1 — Ollama (qwen2.5-coder:7b)**
+              gh pr review "$PR" --approve --body "**AI review tier 1 — Ollama ($OLLAMA_MODEL)**
 
           ${REASON:-Trivial docs/config-only change.}
 

@@ -9,15 +9,21 @@ Repo-local workflow files should be thin callers. Shared behavior lives here.
 
 Repo file: `.github/workflows/ci.yml`
 
-Use for pull request checks only. The default Node path is:
+Use for pull request checks only. The default required lane is one shared check:
 
 - `getnodus/.github/.github/workflows/typecheck.yml@main`
-- `getnodus/.github/.github/workflows/security.yml@main`
-- `getnodus/.github/.github/workflows/cleanup.yml@main`
-- `getnodus/.github/.github/workflows/ai-review.yml@main`
 
-CI checks install dependencies and report status. They do not push commits,
-rewrite lockfiles, format branches, or merge pull requests.
+CI installs dependencies and runs one explicit package script. It does not push
+commits, rewrite lockfiles, format branches, run agents, deploy, or merge pull
+requests.
+
+For Cloudflare product repos, the PR check should run the same build Cloudflare
+runs. Use a repo script such as `ci:cloudflare`, and make that script build every
+Cloudflare service in the repo.
+
+Security, cleanup, dependency reporting, and AI review are separate advisory
+lanes. Do not make them part of the required PR check set unless the repo has a
+clear reason.
 
 ### Agents
 
@@ -53,7 +59,26 @@ Repo file: `.github/workflows/scheduled.yml` in this repository only.
 
 Central org maintenance runs here so every repo does not need its own cron
 workflow. Current jobs remind on stale pull requests and maintain a failed
-workflow digest issue.
+workflow digest issue. Org maintenance may report, comment, and open/update
+issues; it must not auto-merge.
+
+## Dependency policy
+
+Dependabot exists to keep dependency work visible, not noisy. Default config:
+
+- weekly schedule, Monday morning America/Chicago
+- grouped patch/minor updates
+- low open PR limit
+- major version updates ignored until intentionally requested
+
+Use `dep-check.yml` for a digest-style snapshot when a repo needs awareness
+without PR churn.
+
+## Local model policy
+
+The server-local Ollama model is `qwen2.5-coder:7b`. It fits the RTX 3050 8GB
+budget and is good for cheap advisory triage. It is not the reviewer of record
+for sensitive or complex changes; explicit Claude/Codex workflows handle those.
 
 ## `nodus-bot` authority
 
@@ -104,3 +129,7 @@ routing only after the org-level secret and policy are deliberately set.
 4. Add `deploy.yml` only if the repo deploys production infrastructure.
 5. Remove old mixed-purpose `nodus-bot.yml` cron/workflow files.
 6. Use `secrets: inherit` when calling shared workflows that need org secrets.
+7. Add `.github/dependabot.yml` only when the repo has dependencies worth
+   scheduled update PRs.
+
+See `REPO_STANDARD.md` for copy-paste caller templates.

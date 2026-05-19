@@ -44,7 +44,7 @@ jobs:
           echo "Changed files:"
           echo "$CHANGED"
 
-          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|\.github/ISSUE_TEMPLATE|profile)/|^LICENSE$|^CHANGELOG' || true)
+          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|profile)/|^\.github/(dependabot\.yml|pully\.yml|ISSUE_TEMPLATE|PULL_REQUEST_TEMPLATE)(/|$)|^LICENSE$|^CHANGELOG' || true)
           LOCKFILE_TOUCHED=$(echo "$CHANGED" | grep -E '(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock|poetry\.lock|uv\.lock|go\.sum)$' || true)
 
           if [ -z "$NON_DOCS" ] && [ -z "$LOCKFILE_TOUCHED" ] && [ -n "$CHANGED" ]; then
