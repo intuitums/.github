@@ -97,12 +97,26 @@ jobs:
         if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm'
         run: npm ci
 
+      - id: script
+        name: Check requested script exists
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
+        env:
+          COMMAND: ${{ inputs.command }}
+        run: |
+          set -euo pipefail
+          if jq -e --arg command "$COMMAND" '.scripts[$command] // empty' package.json >/dev/null; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "No package.json script named '$COMMAND'; skipping this check."
+          fi
+
       - name: Run ${{ inputs.command }} (pnpm)
-        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm' && steps.script.outputs.exists == 'true'
         run: pnpm run ${{ inputs.command }}
 
       - name: Run ${{ inputs.command }} (npm)
-        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm'
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm' && steps.script.outputs.exists == 'true'
         run: npm run ${{ inputs.command }}
 
       - name: No Node project detected
