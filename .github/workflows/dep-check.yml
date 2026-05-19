@@ -17,6 +17,10 @@ on:
         description: 'GitHub username to assign the daily dep-check issue to'
         type: string
         default: fschrhunt
+      node-version:
+        description: 'Node.js version to use for dependency checks'
+        type: string
+        default: '22'
     secrets:
       NODUS_BOT_PAT:
         required: true
@@ -48,13 +52,16 @@ jobs:
           echo "No JS lockfile found — nothing to check."
           echo "{}" > outdated.json
 
-      - uses: actions/setup-node@v4
+      - uses: pnpm/action-setup@v6
+        if: steps.pm.outputs.pm == 'pnpm'
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
+
+      - uses: actions/setup-node@v6
         if: steps.pm.outputs.pm != 'none'
         with:
-          node-version: '20'
-
-      - uses: pnpm/action-setup@v4
-        if: steps.pm.outputs.pm == 'pnpm'
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ steps.pm.outputs.pm }}
 
       - name: Install (pnpm)
         if: steps.pm.outputs.pm == 'pnpm'

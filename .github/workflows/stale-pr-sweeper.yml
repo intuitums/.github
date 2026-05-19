@@ -1,8 +1,8 @@
 name: Stale PR sweeper (reusable)
 
 # Scans every repo in the org for PRs that have been sitting open with no
-# activity. Pings the author after 3 days, closes after 14. Keeps the
-# inbox clean and surfaces forgotten flagged-for-human PRs.
+# activity. Pings the author after 3 days. It does not close PRs; Fischer
+# decides when work is abandoned.
 
 on:
   workflow_call:
@@ -11,10 +11,6 @@ on:
         description: 'Post a reminder comment after this many days of inactivity'
         type: number
         default: 3
-      close-after-days:
-        description: 'Close the PR after this many days of inactivity'
-        type: number
-        default: 14
     secrets:
       BOT_TOKEN:
         description: 'PAT with read-org + write access to all repos'
@@ -31,7 +27,6 @@ jobs:
           github-token: ${{ secrets.BOT_TOKEN || github.token }}
           script: |
             const REMIND_DAYS = ${{ inputs.remind-after-days }};
-            const CLOSE_DAYS = ${{ inputs.close-after-days }};
             const ORG = context.repo.owner;
             const REMIND_MARKER = '<!-- stale-pr-sweeper:reminder -->';
 
@@ -42,7 +37,6 @@ jobs:
             });
 
             let reminded = 0;
-            let closed = 0;
             const now = new Date();
 
             for (const repo of repos) {
@@ -57,24 +51,6 @@ jobs:
                 if (pr.draft) continue;
                 const updated = new Date(pr.updated_at);
                 const ageDays = (now - updated) / (1000 * 60 * 60 * 24);
-
-                if (ageDays >= CLOSE_DAYS) {
-                  await github.rest.issues.createComment({
-                    owner: ORG,
-                    repo: repo.name,
-                    issue_number: pr.number,
-                    body: `Closing automatically — no activity in ${Math.floor(ageDays)} days. Reopen anytime if still relevant.`,
-                  });
-                  await github.rest.pulls.update({
-                    owner: ORG,
-                    repo: repo.name,
-                    pull_number: pr.number,
-                    state: 'closed',
-                  });
-                  closed++;
-                  console.log(`closed ${ORG}/${repo.name}#${pr.number} (${Math.floor(ageDays)} days)`);
-                  continue;
-                }
 
                 if (ageDays >= REMIND_DAYS) {
                   // Avoid double-pinging: check if a reminder already exists since last activity.
@@ -95,7 +71,7 @@ jobs:
                     owner: ORG,
                     repo: repo.name,
                     issue_number: pr.number,
-                    body: `${REMIND_MARKER}\n@${assignee} this PR has been idle for ${Math.floor(ageDays)} days. Either land it, close it, or push a fresh commit to reset the clock. Auto-closes after ${CLOSE_DAYS} days of inactivity.`,
+                    body: `${REMIND_MARKER}\n@${assignee} this PR has been idle for ${Math.floor(ageDays)} days. Either land it, close it, or push a fresh commit to reset the clock.`,
                   });
                   reminded++;
                   console.log(`reminded ${ORG}/${repo.name}#${pr.number} (${Math.floor(ageDays)} days)`);
@@ -103,5 +79,5 @@ jobs:
               }
             }
 
-            console.log(`Sweep complete: ${reminded} reminded, ${closed} closed.`);
-            core.summary.addHeading('Stale PR sweep').addRaw(`${reminded} reminded · ${closed} closed`).write();
+            console.log(`Sweep complete: ${reminded} reminded.`);
+            core.summary.addHeading('Stale PR sweep').addRaw(`${reminded} reminded`).write();

@@ -1,11 +1,8 @@
 name: Security (reusable)
 
-# Reusable security scans. Runs on every PR alongside typecheck.
-#   - gitleaks: detects committed secrets (free alternative to GHAS push protection)
-#   - audit: flags high-severity advisories in production deps (npm or pnpm)
-#
-# Separated from typecheck.yml so a security failure does NOT trigger
-# the Claude auto-fix step (these failures want human attention).
+# Conservative reusable security checks.
+# This workflow reports secret and dependency risk only. It never commits,
+# auto-fixes, or merges.
 
 on:
   workflow_call:
@@ -15,8 +12,11 @@ on:
         default: '8.27.2'
       audit-level:
         type: string
-        description: 'audit minimum severity that fails the job'
-        default: 'high'
+        description: 'Audit minimum severity that fails the job'
+        default: high
+      node-version:
+        type: string
+        default: '22'
 
 jobs:
   gitleaks:
@@ -30,15 +30,15 @@ jobs:
 
       - name: Install gitleaks
         run: |
-          set -e
-          VERSION="${{ inputs.gitleaks-version }}"
-          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${VERSION}/gitleaks_${VERSION}_linux_x64.tar.gz" \
-            | tar -xz -C /tmp gitleaks
-          /tmp/gitleaks version
+          set -euo pipefail
+          version="${{ inputs.gitleaks-version }}"
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v${version}/gitleaks_${version}_linux_x64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
 
       - name: Scan working tree for secrets
         run: |
-          /tmp/gitleaks detect \
+          "$RUNNER_TEMP/gitleaks" detect \
             --redact \
             --no-banner \
             --source . \
@@ -54,6 +54,7 @@ jobs:
       - id: pm
         name: Detect package manager
         run: |
+          set -euo pipefail
           if [ -f pnpm-lock.yaml ]; then
             echo "pm=pnpm" >> "$GITHUB_OUTPUT"
           elif [ -f package-lock.json ]; then
@@ -61,29 +62,45 @@ jobs:
           else
             echo "pm=none" >> "$GITHUB_OUTPUT"
           fi
-          echo "Detected: $(cat $GITHUB_OUTPUT | grep pm=)"
+
+      - name: Resolve Node version
+        id: node
+        if: steps.pm.outputs.pm != 'none'
+        run: |
+          set -euo pipefail
+          if [ -s .nvmrc ]; then
+            echo "version=$(tr -d '[:space:]' < .nvmrc)" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.node-version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v6
+        if: steps.pm.outputs.pm == 'pnpm'
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
 
       - uses: actions/setup-node@v6
         if: steps.pm.outputs.pm != 'none'
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ steps.node.outputs.version }}
           cache: ${{ steps.pm.outputs.pm }}
 
-      - uses: pnpm/action-setup@v6
-        if: steps.pm.outputs.pm == 'pnpm'
-
-      - name: Install deps (pnpm)
+      - name: Install dependencies (pnpm)
         if: steps.pm.outputs.pm == 'pnpm'
         run: pnpm install --frozen-lockfile
 
-      - name: Install deps (npm)
+      - name: Install dependencies (npm)
         if: steps.pm.outputs.pm == 'npm'
         run: npm ci
 
-      - name: Audit (pnpm, ${{ inputs.audit-level }}+ severity, prod only)
+      - name: Audit pnpm production dependencies
         if: steps.pm.outputs.pm == 'pnpm'
         run: pnpm audit --prod --audit-level=${{ inputs.audit-level }}
 
-      - name: Audit (npm, ${{ inputs.audit-level }}+ severity, prod only)
+      - name: Audit npm production dependencies
         if: steps.pm.outputs.pm == 'npm'
         run: npm audit --omit=dev --audit-level=${{ inputs.audit-level }}
+
+      - name: No Node project detected
+        if: steps.pm.outputs.pm == 'none'
+        run: echo "No pnpm-lock.yaml or package-lock.json found; skipping dependency audit."

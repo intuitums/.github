@@ -1,61 +1,64 @@
 name: Typecheck (reusable)
 
-# Reusable workflow: install deps + run `<pm> <command>` with Claude auto-fix
-# on failure. Skips entirely for docs / yaml / config-only PRs. Auto-detects
-# the package manager via lockfile (pnpm > npm).
+# Conservative reusable Node check.
+# Installs dependencies and runs one package script without committing,
+# auto-fixing, or merging anything. Callers wire this from their repo-local
+# ci.yml and keep repo-specific choices as inputs.
 
 on:
   workflow_call:
     inputs:
       command:
-        description: 'pnpm/npm script to run (e.g. "typecheck", "build", "test")'
+        description: 'Package script to run, such as typecheck, build, test, or lint'
         type: string
-        default: 'typecheck'
-    secrets:
-      CLAUDE_CODE_OAUTH_TOKEN:
-        required: true
-      NODUS_BOT_PAT:
-        required: true
+        default: typecheck
+      node-version:
+        description: 'Node.js version to use when .nvmrc is absent'
+        type: string
+        default: '22'
+      skip-docs-only:
+        description: 'Skip the check when a pull request only changes inert docs/config files'
+        type: boolean
+        default: true
 
 jobs:
   check:
     runs-on: [self-hosted, server]
     permissions:
-      contents: write
-      pull-requests: write
-      id-token: write
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event.pull_request.head.ref }}
 
       - id: changes
-        name: Detect docs-only / config-only changes
+        name: Detect docs-only changes
+        if: github.event_name == 'pull_request' && inputs.skip-docs-only
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          set -e
+          set -euo pipefail
           git fetch --depth=50 origin "$BASE_SHA" 2>/dev/null || true
           CHANGED=$(git diff --name-only "$BASE_SHA...$HEAD_SHA" 2>/dev/null || echo "")
           echo "Changed files:"
           echo "$CHANGED"
-          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|\.github)/|^LICENSE|^CHANGELOG' || true)
-          # Lockfiles match .yaml/.json but are CODE — never skip if they changed.
+
+          NON_DOCS=$(echo "$CHANGED" | grep -vE '\.(md|markdown|txt|json5?|ya?ml|toml)$|^(docs|\.github/ISSUE_TEMPLATE|profile)/|^LICENSE$|^CHANGELOG' || true)
           LOCKFILE_TOUCHED=$(echo "$CHANGED" | grep -E '(^|/)(pnpm-lock\.yaml|package-lock\.json|yarn\.lock|Cargo\.lock|poetry\.lock|uv\.lock|go\.sum)$' || true)
+
           if [ -z "$NON_DOCS" ] && [ -z "$LOCKFILE_TOUCHED" ] && [ -n "$CHANGED" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
-            echo "→ docs/config-only, skipping typecheck"
+            echo "Docs/config-only change; skipping ${{ inputs.command }}."
           else
             echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "→ code changes present, running typecheck"
           fi
 
       - id: pm
         name: Detect package manager
         if: steps.changes.outputs.skip != 'true'
         run: |
+          set -euo pipefail
           if [ -f pnpm-lock.yaml ]; then
             echo "pm=pnpm" >> "$GITHUB_OUTPUT"
           elif [ -f package-lock.json ]; then
@@ -63,16 +66,28 @@ jobs:
           else
             echo "pm=none" >> "$GITHUB_OUTPUT"
           fi
-          echo "Detected: $(cat $GITHUB_OUTPUT | grep pm=)"
+
+      - name: Resolve Node version
+        id: node
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
+        run: |
+          set -euo pipefail
+          if [ -s .nvmrc ]; then
+            echo "version=$(tr -d '[:space:]' < .nvmrc)" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.node-version }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: pnpm/action-setup@v6
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
+        with:
+          dest: ${{ runner.temp }}/setup-pnpm
 
       - uses: actions/setup-node@v6
         if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm != 'none'
         with:
-          node-version-file: .nvmrc
+          node-version: ${{ steps.node.outputs.version }}
           cache: ${{ steps.pm.outputs.pm }}
-
-      - uses: pnpm/action-setup@v6
-        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
 
       - name: Install dependencies (pnpm)
         if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
@@ -82,32 +97,14 @@ jobs:
         if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm'
         run: npm ci
 
-      - name: Run "${{ inputs.command }}" (pnpm)
+      - name: Run ${{ inputs.command }} (pnpm)
         if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'pnpm'
-        run: pnpm ${{ inputs.command }}
+        run: pnpm run ${{ inputs.command }}
 
-      - name: Run "${{ inputs.command }}" (npm)
+      - name: Run ${{ inputs.command }} (npm)
         if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'npm'
         run: npm run ${{ inputs.command }}
 
-      - name: Auto-fix with Claude on failure
-        if: failure() && steps.changes.outputs.skip != 'true'
-        timeout-minutes: 5
-        uses: anthropics/claude-code-action@v1
-        with:
-          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ secrets.NODUS_BOT_PAT }}
-          prompt: |
-            CI just failed on this PR. Read the failed step's logs
-            (use `gh run view ${{ github.run_id }} --log-failed`),
-            identify the cause, fix it on this branch, commit, and push.
-
-            Constraints:
-            - Fix only what's broken. Do NOT refactor or add unrelated changes.
-            - If the fix requires changing the PR's intent or scope,
-              instead post a comment explaining why and do NOT commit.
-            - If you can't determine the cause from the logs, post a
-              comment with what you found and do NOT commit.
-
-            After committing, CI will re-run automatically. Don't try to
-            re-run it yourself.
+      - name: No Node project detected
+        if: steps.changes.outputs.skip != 'true' && steps.pm.outputs.pm == 'none'
+        run: echo "No pnpm-lock.yaml or package-lock.json found; nothing to run."

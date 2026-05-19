@@ -1,14 +1,12 @@
 name: AI Review (reusable)
 
-# Reusable 3-tier AI review pipeline:
-#   tier 1: heuristics + Ollama (local) — auto-approves trivial docs/config PRs
+# Reusable advisory AI review pipeline:
+#   tier 1: heuristics + Ollama (local) — may approve trivial docs/config PRs
 #   tier 2a: Claude — if local Ollama says "needs review" and Claude didn't author
 #   tier 2b: Codex — if local Ollama says "needs review" and Claude DID author
 # Sensitive paths (auth, billing, migrations, .github/workflows, secrets) skip
 # AI review entirely and demand a human.
-#
-# Auto-merge is armed at PR open/sync — GitHub waits for required checks +
-# approval before firing.
+# This workflow never changes branches and never arms auto-merge.
 
 on:
   workflow_call:
@@ -107,7 +105,7 @@ jobs:
             echo "verdict=dependabot-group-approved" >> $GITHUB_OUTPUT
             gh pr review "$PR" --approve --body "**AI review tier 1 — Dependabot patch/minor group**
 
-          Auto-approved: Dependabot grouped PRs only contain bumps of the same severity, and patch/minor follow semver. Cloud-tier review skipped to save token budget."
+          Approved: Dependabot grouped PRs only contain bumps of the same severity, and patch/minor follow semver. Cloud-tier review skipped to save token budget."
             exit 0
           fi
 
@@ -122,7 +120,7 @@ jobs:
 
           After you decide, larger cloud models (Claude or Codex) can still review the PR. Your role is a FILTER: skip cloud review only when a PR is so obviously trivial that paying for a careful reviewer would be wasteful.
 
-          Be conservative. Saying NO costs nothing — it just escalates the PR to a smarter reviewer. Saying YES means this PR auto-merges with no further review, so reserve YES for truly inert changes.
+          Be conservative. Saying NO costs nothing — it just escalates the PR to a smarter reviewer. Saying YES approves the PR, so reserve YES for truly inert changes.
 
           Answer YES only if ALL are true:
           - Diff is purely documentation, comments, typos, whitespace, or formatting
@@ -161,7 +159,7 @@ jobs:
 
           ${REASON:-Trivial docs/config-only change.}
 
-          Auto-approved as a trivial, safe change. Cloud-tier review skipped to save token budget."
+          Approved as a trivial, safe change. Cloud-tier review skipped to save token budget."
               exit 0
             fi
           fi
@@ -235,9 +233,11 @@ jobs:
           fetch-depth: 0
 
       - name: Fetch PR branch
+        env:
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          git fetch origin "${{ github.event.pull_request.head.ref }}"
-          git checkout "${{ github.event.pull_request.head.ref }}"
+          git fetch origin "$PR_HEAD_REF"
+          git checkout "$PR_HEAD_REF"
 
       - name: Codex review
         env:
@@ -313,21 +313,3 @@ jobs:
 
           $SUMMARY"
           fi
-
-  arm-automerge:
-    needs: triage
-    if: |
-      github.event.pull_request.draft == false &&
-      needs.triage.outputs.verdict != 'escalate-sensitive'
-    runs-on: [self-hosted, server]
-    permissions:
-      pull-requests: write
-      contents: write
-    steps:
-      - name: Arm auto-merge (squash)
-        env:
-          GH_TOKEN: ${{ secrets.NODUS_BOT_PAT }}
-        run: |
-          gh pr merge "${{ github.event.pull_request.number }}" \
-            --repo "${{ github.repository }}" \
-            --auto --squash 2>&1 | tee /dev/stderr || true
