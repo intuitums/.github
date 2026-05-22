@@ -1,0 +1,8 @@
+{
+  "scripts": {
+    "setup": "mkdir -p .context/logs",
+    "run": "echo 'No run script configured for this repo yet.'",
+    "archive": "git status --short --branch"
+  },
+  "runScriptMode": "nonconcurrent"
+}
