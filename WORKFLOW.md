@@ -71,8 +71,10 @@ Add any of these back only for a concrete repo-specific need.
 
 The small shared workflow lane does not need Codex or Claude secrets.
 
-Keep product/deploy secrets in the repos that need them. `NODUS_BOT_PAT` is only
-needed for release workflows that must author release PRs as the service account.
+Keep product/deploy secrets in the repos that need them. Release automation uses
+the default GitHub Actions token; do not add a standing org service-account PAT
+unless a repo has a concrete release requirement that cannot use GitHub-native
+automation.
 
 ## Repo onboarding checklist
 
