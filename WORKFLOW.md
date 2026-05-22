@@ -1,135 +1,85 @@
 # getnodus GitHub workflow control plane
 
 This repository is the shared GitHub automation home for the `getnodus` org.
-Repo-local workflow files should be thin callers. Shared behavior lives here.
+Keep it small. Repo-local workflows should either call a simple reusable
+workflow from here or defer to the official GitHub Apps.
 
-## Lanes
+## Current shared workflows
 
-### CI
+Only two reusable workflows are intentionally kept:
 
-Repo file: `.github/workflows/ci.yml`
+- `.github/workflows/typecheck.yml`: lightweight advisory Node checks.
+- `.github/workflows/release-please.yml`: release PRs for repos that publish
+  versions.
 
-Use for pull request checks only. The default required lane is one shared check:
+Everything else should be installed or configured at the org/product level, not
+rebuilt as custom Actions glue in this repo.
 
-- `getnodus/.github/.github/workflows/typecheck.yml@main`
+## CI policy
 
-CI installs dependencies and runs one explicit package script. It does not push
-commits, rewrite lockfiles, format branches, run agents, deploy, or merge pull
-requests.
+PR CI is advisory by default. It should run fast checks such as `typecheck`,
+`lint`, or a small project-specific script. It must not auto-fix, deploy, merge,
+or block Fischer from merging.
 
-For Cloudflare product repos, the PR check should run the same build Cloudflare
-runs. Use a repo script such as `ci:cloudflare`, and make that script build every
-Cloudflare service in the repo.
+Full Cloudflare builds should be manual workflow-dispatch checks unless a repo
+explicitly needs them on every PR.
 
-Security, cleanup, dependency reporting, and AI review are separate advisory
-lanes. Do not make them part of the required PR check set unless the repo has a
-clear reason.
+## Agent integrations
 
-### Agents
+Codex and Claude should be handled by their official GitHub Apps installed on
+the `getnodus` organization.
 
-Repo file: `.github/workflows/agents.yml`
+Manual triggers:
 
-Use for explicit human-triggered agent work only. `@claude` is the live v1
-trigger and routes through `claude-responder.yml`. Do not wire broad scheduled
-agent repair loops into repos.
+- `@codex review`
+- `@codex fix the CI failures`
+- `@claude review`
 
-### Release
+Do not recreate these with `openai/codex-action`, `anthropics/claude-code-action`,
+or repo-local `agents.yml` files. Do not enable automatic agent reviews by
+default.
 
-Repo file: `.github/workflows/release.yml`
+## Org ruleset policy
 
-Use only for repos that publish versions and have both:
+The org ruleset should keep `main` protected from deletion and force pushes.
+Default branch protection should not require:
 
-- `release-please-config.json`
-- `.release-please-manifest.json`
+- approving reviews
+- CODEOWNERS review
+- status checks
+- strict up-to-date branches
 
-Release PRs are authored with `NODUS_BOT_PAT` so the release PR can run normal
-CI. Product repos that deploy from Cloudflare Builds usually do not need
-release-please unless they intentionally publish packages.
+Checks and AI reviews are advisory. Fischer decides when to merge.
 
-### Deploy
+## Removed automation
 
-Repo file: `.github/workflows/deploy.yml`
+The previous central automation lanes were intentionally removed:
 
-Use only for production deployment or production health checks. Keep deploy
-logic separate from PR checks and agent triggers.
+- custom AI review
+- custom Claude responder
+- PR hygiene comments
+- dependency digest issues
+- stale PR sweeps
+- failed workflow digests
+- reusable security/audit checks
+- `.github` repo Dependabot
+- central CODEOWNERS
 
-### Org maintenance
-
-Repo file: `.github/workflows/scheduled.yml` in this repository only.
-
-Central org maintenance runs here so every repo does not need its own cron
-workflow. Current jobs remind on stale pull requests and maintain a failed
-workflow digest issue. Org maintenance may report, comment, and open/update
-issues; it must not auto-merge.
-
-## Dependency policy
-
-Dependabot exists to keep dependency work visible, not noisy. Default config:
-
-- weekly schedule, Monday morning America/Chicago
-- grouped patch/minor updates
-- low open PR limit
-- major version updates ignored until intentionally requested
-
-Use `dep-check.yml` for a digest-style snapshot when a repo needs awareness
-without PR churn.
-
-## Local model policy
-
-The server-local Ollama model is `qwen2.5-coder:7b`. It fits the RTX 3050 8GB
-budget and is good for cheap advisory triage. It is not the reviewer of record
-for sensitive or complex changes; explicit Claude/Codex workflows handle those.
-
-## `nodus-bot` authority
-
-`nodus-bot` is a conservative service account.
-
-Allowed:
-
-- Comment on issues and pull requests.
-- Open or update release/dependency/maintenance PRs.
-- Create or update digest issues.
-- Use `NODUS_BOT_PAT` when the default GitHub token cannot trigger required
-  downstream workflows.
-
-Not allowed:
-
-- Push directly to `main`.
-- Auto-merge pull requests.
-- Auto-fix CI by committing to human branches.
-- Silently mutate workflow, deploy, secret, migration, auth, billing, or
-  security-sensitive paths.
-
-## Branch conventions
-
-- `main`: protected integration and deploy lane.
-- `feat/*`, `fix/*`, `chore/*`: human or agent feature branches.
-- `dependabot/*`: dependency branches.
-- `release-please--*`: release automation branches.
-
-Agents and bots should work on branches, open PRs, and stop. Fischer merges.
+Add any of these back only for a concrete repo-specific need.
 
 ## Required org secrets
 
-- `NODUS_BOT_PAT`: service account token for PR comments, release PRs, and
-  central org maintenance.
-- `CLAUDE_CODE_OAUTH_TOKEN`: Claude Code Action token for explicit `@claude`
-  workflows and advisory AI review.
-- `SUPABASE_ACCESS_TOKEN`: product deploy workflows that use Supabase.
-- `SUPABASE_DB_PASSWORD`: product DB migration deploy workflows.
+The small shared workflow lane does not need Codex or Claude secrets.
 
-`OPENAI_API_KEY` is intentionally not part of the v1 shared lane. Add `@codex`
-routing only after the org-level secret and policy are deliberately set.
+Keep product/deploy secrets in the repos that need them. `NODUS_BOT_PAT` is only
+needed for release workflows that must author release PRs as the service account.
 
 ## Repo onboarding checklist
 
-1. Add `ci.yml` for PR checks.
-2. Add `agents.yml` for explicit `@claude` triggers.
+1. Add a small advisory `ci.yml`.
+2. Install/enable official Codex and Claude GitHub Apps at the org level.
 3. Add `release.yml` only if the repo publishes versions.
 4. Add `deploy.yml` only if the repo deploys production infrastructure.
-5. Remove old mixed-purpose `nodus-bot.yml` cron/workflow files.
-6. Use `secrets: inherit` when calling shared workflows that need org secrets.
-7. Add `.github/dependabot.yml` only when the repo has dependencies worth
-   scheduled update PRs.
-
-See `REPO_STANDARD.md` for copy-paste caller templates.
+5. Remove repo-local `agents.yml`, custom AI review, cleanup, stale, dependency
+   digest, and mixed-purpose bot workflows.
+6. Avoid CODEOWNERS unless there is a real ownership boundary.

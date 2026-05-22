@@ -1,13 +1,12 @@
 # getnodus repo standard
 
-This is the boring default. Repos should start here and add only the lanes they
-actually need.
+This is the default shape for repositories in the `getnodus` org. Keep repo
+automation quiet, advisory, and easy to understand.
 
 ## Pull request CI
 
-Use one required check for normal PRs. The shared workflow installs dependencies,
-runs one package script, skips inert docs/config changes, and never mutates a
-branch.
+PR checks should report useful signal without blocking Fischer from merging.
+Use one lightweight advisory check for normal PRs.
 
 ```yaml
 name: CI
@@ -15,88 +14,81 @@ name: CI
 on:
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review, edited]
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.repository }}-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.repository }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: true
 
 jobs:
-  check:
+  typecheck:
+    name: Typecheck (advisory)
     uses: getnodus/.github/.github/workflows/typecheck.yml@main
 ```
 
-Product repos that deploy with Cloudflare Builds should pass the exact Cloudflare
-build script instead of a generic typecheck:
+Product repos that need a full Cloudflare production build should expose it as
+a manual check, not an automatic PR check:
 
 ```yaml
-jobs:
-  check:
-    uses: getnodus/.github/.github/workflows/typecheck.yml@main
-    with:
-      command: ci:cloudflare
+on:
+  workflow_dispatch:
+    inputs:
+      check:
+        type: choice
+        options: [typecheck, full-cloudflare]
+        default: typecheck
 ```
 
-If one repo contains multiple Cloudflare services, `ci:cloudflare` must build all
-of them. That keeps Cloudflare from being the first place a production build is
-tested.
+Run the full check only when Fischer or an agent asks for it.
 
-## Agent lane
+## Agent integrations
 
-Use `agents.yml` for explicit human requests only. `@claude` is the live trigger
-for v1. Do not add scheduled repair loops or broad auto-fix behavior.
+Do not add repo-local `agents.yml` files for Codex or Claude.
+
+Use the official GitHub Apps installed at the org level:
+
+- `@codex review` for a Codex review.
+- `@codex fix the CI failures` for Codex task work on a PR.
+- `@claude review` for a Claude review.
+
+Keep these integrations manual. Do not enable automatic reviews by default.
+
+## Branch protection
+
+Org rulesets should protect `main` from force pushes and deletion. They should
+not require approving reviews, CODEOWNERS review, strict up-to-date branches, or
+required status checks by default.
+
+## CODEOWNERS
+
+Do not add CODEOWNERS unless a repo has a real ownership boundary. Default
+CODEOWNERS files create review-request noise and should stay out of normal
+product repos.
+
+## Release lane
+
+Use the shared `release-please.yml` only for repos that publish versions and
+already have:
+
+- `release-please-config.json`
+- `.release-please-manifest.json`
+
+Most product repos that deploy from Cloudflare Builds do not need release
+automation.
 
 ## Dependency lane
 
-Dependabot should be quiet by default:
+Do not add dependency automation by default. Add Dependabot only when the repo
+needs scheduled update PRs, and keep it quiet:
 
 - weekly schedule
 - grouped patch/minor updates
 - low open PR limit
 - no automatic major version PRs
 
-For Node repos, use this shape:
-
-```yaml
-version: 2
-
-updates:
-  - package-ecosystem: npm
-    directory: /
-    schedule:
-      interval: weekly
-      day: monday
-      time: "10:00"
-      timezone: America/Chicago
-    open-pull-requests-limit: 3
-    commit-message:
-      prefix: chore(deps)
-      prefix-development: chore(deps-dev)
-    groups:
-      production-patch-minor:
-        dependency-type: production
-        update-types: [patch, minor]
-      development-patch-minor:
-        dependency-type: development
-        update-types: [patch, minor]
-    ignore:
-      - dependency-name: "*"
-        update-types:
-          - version-update:semver-major
-```
-
-Add a second `directory` entry for nested apps such as `docs/`.
-
-## Local model lane
-
-The server has an RTX 3050 8GB. Use Ollama `qwen2.5-coder:7b` for cheap local
-triage, tiny advisory reviews, and quick code classification. Larger local coder
-models are not the default because they do not fit the VRAM budget cleanly.
-
-Use explicit Claude/Codex workflows for real implementation, sensitive diffs,
-workflow changes, dependency changes, deploys, auth, billing, and migrations.
-
 ## No auto-merge
 
-No shared workflow may auto-merge. Bots can comment, review, open issues, and
-open PRs. Fischer lands changes.
+No shared workflow may auto-merge, push fixes to human branches, deploy, or
+silently mutate workflow, auth, billing, migration, secret, or security-sensitive
+paths. Bots and agents can comment, review, open PRs, and stop.
