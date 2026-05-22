@@ -83,3 +83,6 @@ needed for release workflows that must author release PRs as the service account
 5. Remove repo-local `agents.yml`, custom AI review, cleanup, stale, dependency
    digest, and mixed-purpose bot workflows.
 6. Avoid CODEOWNERS unless there is a real ownership boundary.
+7. Add `conductor.json` when a repo should be easy to run from Conductor.
+8. Add `.worktreeinclude` only for safe local development files; never broad
+   production secret globs.

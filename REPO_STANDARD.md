@@ -82,10 +82,18 @@ automation.
 Do not add dependency automation by default. Add Dependabot only when the repo
 needs scheduled update PRs, and keep it quiet:
 
-- weekly schedule
+- monthly schedule
 - grouped patch/minor updates
-- low open PR limit
+- one open PR at a time
 - no automatic major version PRs
+
+## Conductor lane
+
+Repos that are used from Conductor should include a small `conductor.json`
+with setup/run/archive scripts that work from an isolated workspace. Use
+`CONDUCTOR_PORT` for dev servers instead of hard-coded ports. Add
+`.worktreeinclude` only for safe local development files such as `.env.local`;
+do not copy production secrets with broad `.env.*` patterns.
 
 ## No auto-merge
 
