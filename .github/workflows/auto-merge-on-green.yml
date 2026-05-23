@@ -1,0 +1,36 @@
+# Reusable auto-merge for human-authored PRs labeled `auto-merge`.
+# Triggers GitHub's native auto-merge (PR merges when all required checks pass).
+#
+# Caller (per repo):
+#   name: auto-merge-on-green
+#   on:
+#     pull_request:
+#       types: [labeled, opened, reopened, synchronize, ready_for_review]
+#   jobs:
+#     call:
+#       uses: getnodus/.github/.github/workflows/auto-merge-on-green.yml@main
+#       permissions:
+#         contents: write
+#         pull-requests: write
+#
+# Repo settings must have "Allow auto-merge" ENABLED.
+# Branch protection on main must be ON (it is — see ENG-6) so auto-merge waits for checks.
+
+name: Auto-merge on green
+
+on:
+  workflow_call:
+
+jobs:
+  enable-auto-merge:
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.pull_request.labels.*.name, 'auto-merge')
+      && github.event.pull_request.user.login == 'fschrhunt'
+      && github.event.pull_request.draft == false
+    steps:
+      - name: Enable auto-merge (squash)
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
