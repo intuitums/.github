@@ -1,0 +1,69 @@
+# Reusable CI for plain Node.js / TypeScript repos.
+# Caller:
+#   jobs:
+#     ci:
+#       uses: getnodus/.github/.github/workflows/ci-node.yml@main
+#       with:
+#         node-version: '20'
+#         package-manager: pnpm
+
+name: CI (Node)
+
+on:
+  workflow_call:
+    inputs:
+      node-version:
+        description: Node version
+        type: string
+        default: '20'
+      package-manager:
+        description: pnpm | npm | bun | yarn
+        type: string
+        default: pnpm
+      test-command:
+        description: Override the test command
+        type: string
+        default: ''
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        if: inputs.package-manager == 'pnpm'
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Bun
+        if: inputs.package-manager == 'bun'
+        uses: oven-sh/setup-bun@v2
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: ${{ inputs.package-manager == 'bun' && '' || inputs.package-manager }}
+
+      - name: Install
+        run: |
+          case "${{ inputs.package-manager }}" in
+            pnpm) pnpm install --frozen-lockfile ;;
+            npm)  npm ci ;;
+            bun)  bun install --frozen-lockfile ;;
+            yarn) yarn install --frozen-lockfile ;;
+          esac
+
+      - name: Typecheck
+        run: ${{ inputs.package-manager }} run typecheck --if-present
+
+      - name: Lint
+        run: ${{ inputs.package-manager }} run lint --if-present
+
+      - name: Test
+        run: |
+          if [ -n "${{ inputs.test-command }}" ]; then
+            ${{ inputs.test-command }}
+          else
+            ${{ inputs.package-manager }} run test --if-present
+          fi
