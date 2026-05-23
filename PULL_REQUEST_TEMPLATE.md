@@ -1,3 +1,5 @@
+> **CI failing?** Comment `@claude please fix the failing checks` or `@codex please fix the failing checks` to delegate the fix without context-switching.
+
 ## Summary
 
 <!-- One or two sentences. What changed and why. -->
