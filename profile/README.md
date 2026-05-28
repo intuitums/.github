@@ -1,6 +1,6 @@
 # Nodus
 
-Nodus watches the business and surfaces what's slipping. When you say handle it, it does.
+Open-Source at heart. We ship tools that AI use.
 
 In private development. [Notify me at nodus.to](https://nodus.to).
 
