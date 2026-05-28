@@ -28,9 +28,10 @@ on:
 
 jobs:
   triage:
-    if: |
-      (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'auto-triage')) ||
-      (github.event.action == 'labeled' && github.event.label.name == 'auto-triage')
+    # Only react to the `labeled` event. GitHub also fires `labeled` when an
+    # issue is opened with the label already attached, so this catches both
+    # cases without double-running.
+    if: github.event.action == 'labeled' && github.event.label.name == 'auto-triage'
     runs-on: ubuntu-latest
     concurrency:
       group: auto-triage-${{ github.repository }}-${{ github.event.issue.number }}
