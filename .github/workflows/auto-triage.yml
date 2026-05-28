@@ -32,6 +32,9 @@ jobs:
       (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'auto-triage')) ||
       (github.event.action == 'labeled' && github.event.label.name == 'auto-triage')
     runs-on: ubuntu-latest
+    concurrency:
+      group: auto-triage-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -42,6 +45,9 @@ jobs:
         uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          show_full_output: true
+          claude_args: |
+            --allowedTools "Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh issue view:*),Bash(gh pr create:*),Bash(gh pr edit:*),Bash(gh pr view:*),Bash(gh label:*),Bash(gh api:*),Bash(git checkout:*),Bash(git switch:*),Bash(git branch:*),Bash(git add:*),Bash(git commit:*),Bash(git push:*),Bash(git status),Bash(git diff:*),Bash(git log:*),Bash(ls:*),Bash(pwd),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(rg:*),Edit,Write,Read,Grep,Glob,LS,MultiEdit"
           prompt: |
             You are running as **Auto-Triage** on issue #${{ github.event.issue.number }}: "${{ github.event.issue.title }}".
 
@@ -54,23 +60,27 @@ jobs:
             3. Decide one of three outcomes:
 
             **A. Confident fix** — you can reproduce and fix it:
-              - Create branch `auto-triage/issue-${{ github.event.issue.number }}`.
+              - Create branch `auto-triage/issue-${{ github.event.issue.number }}` with `git checkout -b`.
               - Make the fix. Keep the diff minimal and on-topic.
-              - Open a **draft** pull request against `main` with body starting "Fixes #${{ github.event.issue.number }}".
-              - Add the `automation` label to the PR.
-              - Comment on the issue linking to the PR.
+              - Commit and push: `git push -u origin auto-triage/issue-${{ github.event.issue.number }}`.
+              - Open a **draft** pull request with `gh pr create --draft --base main --title "..." --body "Fixes #${{ github.event.issue.number }} ..."`.
+              - Add the `automation` label: `gh pr edit <num> --add-label automation`.
+              - Comment on the issue: `gh issue comment ${{ github.event.issue.number }} --body "Opened draft PR #<num>"`.
 
             **B. Reproduced but unclear fix** — you confirmed the bug but the right fix isn't obvious:
-              - Comment on the issue with: reproduction steps, root cause analysis, 1-2 fix options with tradeoffs.
+              - Comment on the issue with reproduction steps, root cause, and 1-2 fix options with tradeoffs:
+                `gh issue comment ${{ github.event.issue.number }} --body "..."`
               - Do NOT open a PR.
 
             **C. Cannot reproduce or insufficient info**:
-              - Comment on the issue with what you tried, why it doesn't reproduce, and what info you need from the reporter.
+              - Comment on the issue with what you tried, why it doesn't reproduce, and what info you need:
+                `gh issue comment ${{ github.event.issue.number }} --body "..."`
               - Do NOT open a PR.
 
             Rules:
             - Never push to `main`. Never merge. Drafts only.
             - Stay on-topic — don't refactor unrelated code.
-            - If the issue is clearly not a bug (feature request, question, duplicate), comment and stop.
+            - If the issue is clearly not a bug (feature request, question, duplicate, smoke test), follow path C — comment and stop.
+            - You MUST take one of the three actions above before finishing. Don't just analyze silently.
           additional_permissions: |
             actions: read
