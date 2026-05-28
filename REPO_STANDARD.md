@@ -5,8 +5,10 @@ automation quiet, advisory, and easy to understand.
 
 ## Pull request CI
 
-PR checks should report useful signal without blocking Fischer from merging.
-Use one lightweight advisory check for normal PRs.
+PR checks should report useful signal without blocking the owner from merging.
+Use one lightweight advisory check for normal PRs. CI is currently inlined
+per-repo (there is no shared CI workflow — `ci-node.yml` was removed after
+nobody adopted it). Match this shape:
 
 ```yaml
 name: CI
@@ -24,7 +26,17 @@ concurrency:
 jobs:
   typecheck:
     name: Typecheck (advisory)
-    uses: getnodus/.github/.github/workflows/typecheck.yml@main
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          # cache: pnpm | npm | bun — match the repo's package manager
+      - run: <install command>      # pnpm install --frozen-lockfile | npm ci | bun install --frozen-lockfile
+      - run: <typecheck command>    # pnpm typecheck | npm run typecheck
 ```
 
 Product repos that need a full Cloudflare production build should expose it as
@@ -44,15 +56,23 @@ Run the full check only when Fischer or an agent asks for it.
 
 ## Agent integrations
 
-Do not add repo-local `agents.yml` files for Codex or Claude.
+Two paths exist:
 
-Use the official GitHub Apps installed at the org level:
+1. **Official GitHub Apps** for Codex and Claude, installed at the org level —
+   handle the `review`-style triggers:
+   - `@codex review` — Codex review
+   - `@codex fix the CI failures` — Codex task work on a PR
+   - `@claude review` — Claude review
+2. **Workflows in `getnodus/.github`** for richer Claude Code interactions:
+   - `claude.yml` — repo-local copy lets trusted collaborators write
+     `@claude <anything>` on issues/PRs. Hardened with an
+     `author_association` allowlist; copy from `getnodus/.github` rather
+     than rolling your own.
+   - `auto-triage.yml` — opt-in via label, opens draft PRs from issues.
+     Treats issue bodies as untrusted; pass `CLAUDE_CODE_OAUTH_TOKEN`
+     explicitly (never `secrets: inherit`).
 
-- `@codex review` for a Codex review.
-- `@codex fix the CI failures` for Codex task work on a PR.
-- `@claude review` for a Claude review.
-
-Keep these integrations manual. Do not enable automatic reviews by default.
+Keep these manual. Do not enable automatic reviews by default.
 
 ## Branch protection
 
@@ -68,11 +88,10 @@ product repos.
 
 ## Release lane
 
-Use the shared `release-please.yml` only for repos that publish versions and
-already have:
-
-- `release-please-config.json`
-- `.release-please-manifest.json`
+Repos that publish versions inline their own `release.yml` (see
+`getnodus/context/.github/workflows/release.yml` for a working example).
+There is no shared `release-please.yml` — it was removed after nothing
+ever adopted it.
 
 Most product repos that deploy from Cloudflare Builds do not need release
 automation.
@@ -95,8 +114,14 @@ with setup/run/archive scripts that work from an isolated workspace. Use
 `.worktreeinclude` only for safe local development files such as `.env.local`;
 do not copy production secrets with broad `.env.*` patterns.
 
-## No auto-merge
+## Auto-merge
 
-No shared workflow may auto-merge, push fixes to human branches, deploy, or
-silently mutate workflow, auth, billing, migration, secret, or security-sensitive
-paths. Bots and agents can comment, review, open PRs, and stop.
+Two opt-in shared workflows exist for narrow auto-merge use:
+
+- `auto-merge-on-green.yml` — PRs labeled `auto-merge` and authored by the
+  org owner squash-merge when checks pass.
+- `dependabot-auto-merge.yml` — patch/minor Dependabot PRs only.
+
+Neither pushes fixes to human branches, deploys, or mutates workflow, auth,
+billing, migration, secret, or security-sensitive paths. Bots and agents
+otherwise comment, review, open PRs, and stop.
