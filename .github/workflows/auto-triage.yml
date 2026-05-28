@@ -1,0 +1,76 @@
+# Reusable Auto-Triage workflow.
+# Runs Claude Code on issues labeled `auto-triage` to investigate the bug,
+# attempt to reproduce, and (when confident) open a draft fix PR.
+#
+# Caller (per repo):
+#   name: Auto-Triage
+#   on:
+#     issues:
+#       types: [opened, labeled]
+#   jobs:
+#     call:
+#       uses: getnodus/.github/.github/workflows/auto-triage.yml@main
+#       permissions:
+#         contents: write
+#         pull-requests: write
+#         issues: write
+#         id-token: write
+#         actions: read
+#       secrets: inherit
+#
+# Repo must have `CLAUDE_CODE_OAUTH_TOKEN` available (org secret).
+# Recommended: create an `auto-triage` label so triggering is explicit.
+
+name: Auto-Triage
+
+on:
+  workflow_call:
+
+jobs:
+  triage:
+    if: |
+      (github.event.action == 'opened' && contains(github.event.issue.labels.*.name, 'auto-triage')) ||
+      (github.event.action == 'labeled' && github.event.label.name == 'auto-triage')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Claude Code (Auto-Triage)
+        uses: anthropics/claude-code-action@v1
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            You are running as **Auto-Triage** on issue #${{ github.event.issue.number }}: "${{ github.event.issue.title }}".
+
+            Issue body:
+            ${{ github.event.issue.body }}
+
+            Your job:
+            1. Read the issue and any related code.
+            2. Try to reproduce the bug or confirm the problem.
+            3. Decide one of three outcomes:
+
+            **A. Confident fix** — you can reproduce and fix it:
+              - Create branch `auto-triage/issue-${{ github.event.issue.number }}`.
+              - Make the fix. Keep the diff minimal and on-topic.
+              - Open a **draft** pull request against `main` with body starting "Fixes #${{ github.event.issue.number }}".
+              - Add the `automation` label to the PR.
+              - Comment on the issue linking to the PR.
+
+            **B. Reproduced but unclear fix** — you confirmed the bug but the right fix isn't obvious:
+              - Comment on the issue with: reproduction steps, root cause analysis, 1-2 fix options with tradeoffs.
+              - Do NOT open a PR.
+
+            **C. Cannot reproduce or insufficient info**:
+              - Comment on the issue with what you tried, why it doesn't reproduce, and what info you need from the reporter.
+              - Do NOT open a PR.
+
+            Rules:
+            - Never push to `main`. Never merge. Drafts only.
+            - Stay on-topic — don't refactor unrelated code.
+            - If the issue is clearly not a bug (feature request, question, duplicate), comment and stop.
+          additional_permissions: |
+            actions: read
