@@ -25,14 +25,3 @@ git commit --no-verify ...      # same
 ```
 
 Don't habit-skip; if a hook is wrong, fix the hook.
-
-## Rollout
-
-Tracked in Linear ENG-14:
-- [ ] website
-- [ ] app
-- [ ] twinpines
-- [ ] atlas-mcp
-- [ ] desktop-mcp
-- [ ] socials-mcp
-- [ ] claw
