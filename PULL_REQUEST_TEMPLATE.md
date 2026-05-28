@@ -1,3 +1,5 @@
+> **Linked Linear issue?** End the description with `Closes <LINEAR-KEY>` so the issue auto-transitions to Done on merge. Branches created from Linear (`<key>-<slug>`) auto-link on PR open.
+>
 > **CI failing?** Comment `@claude please fix the failing checks` or `@codex please fix the failing checks` to delegate the fix without context-switching.
 
 ## Summary
