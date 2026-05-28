@@ -1,6 +1,6 @@
 {
   "scripts": {
-    "setup": "mkdir -p .context/logs",
+    "setup": "git fetch origin --prune && mkdir -p .context/logs",
     "run": "echo 'No run script configured for this repo yet.'",
     "archive": "git status --short --branch"
   },
