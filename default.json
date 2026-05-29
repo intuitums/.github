@@ -12,10 +12,10 @@
   "labels": ["dependencies"],
   "packageRules": [
     {
-      "description": "Auto-merge non-major updates; platform auto-merge waits for required checks.",
+      "description": "Auto-merge non-major updates. Renovate self-merges once checks are green and the stability delay clears (platform auto-merge needs a required check, which not all repos have).",
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true,
-      "platformAutomerge": true
+      "platformAutomerge": false
     },
     {
       "description": "Bundle all GitHub Actions updates into one PR.",
