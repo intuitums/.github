@@ -9,6 +9,7 @@
   ],
   "minimumReleaseAge": "3 days",
   "prHourlyLimit": 0,
+  "constraintsFiltering": "strict",
   "labels": ["dependencies"],
   "packageRules": [
     {
@@ -21,6 +22,11 @@
       "description": "Bundle all GitHub Actions updates into one PR.",
       "matchManagers": ["github-actions"],
       "groupName": "github-actions"
+    },
+    {
+      "description": "Group the Remotion monorepo packages (they version in lockstep, share one package.json).",
+      "matchPackageNames": ["remotion", "@remotion/*"],
+      "groupName": "remotion"
     },
     {
       "description": "Major updates always require manual review.",
