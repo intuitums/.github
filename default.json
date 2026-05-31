@@ -9,6 +9,7 @@
   ],
   "minimumReleaseAge": "3 days",
   "prHourlyLimit": 0,
+  "rebaseWhen": "behind-base-branch",
   "constraintsFiltering": "strict",
   "labels": ["dependencies"],
   "packageRules": [
@@ -17,6 +18,12 @@
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true,
       "platformAutomerge": false
+    },
+    {
+      "description": "Batch all non-major npm updates into a single PR. Dozens of individual minor/patch PRs all edit the same lockfile during the 3-day stability window and conflict the moment one merges; one grouped PR has one lockfile change and cannot self-conflict.",
+      "matchManagers": ["npm"],
+      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
+      "groupName": "npm non-major"
     },
     {
       "description": "Bundle all GitHub Actions updates into one PR.",
