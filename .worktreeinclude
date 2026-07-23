@@ -1,5 +1,0 @@
-# Conductor files copied into workspaces.
-# Keep secrets out unless the repo explicitly requires local-only env copies.
-.context/**
-!*.env
-!*.env.*
