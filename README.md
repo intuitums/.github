@@ -1,12 +1,11 @@
-# Intuitumxyz GitHub
+# Intuitum
 
-Organization defaults and shared automation:
+Shared GitHub defaults and automation for the Intuitum organization.
 
-- `default.json` is the Renovate preset `github>Intuitumxyz/.github`.
-- `claude.yml` is the reusable trusted-collaborator Claude workflow.
-- `shared-checks.yml` provides changed-file hygiene, Actions validation, and
-  secret scanning for `solo`, `leo`, and `diffuse` only.
+- `default.json` is the shared Renovate preset: `github>Intuitumxyz/.github`.
+- `claude.yml` provides trusted-collaborator Claude automation.
+- `shared-checks.yml` provides repository hygiene, Actions validation, and
+  secret scanning for `solo`, `leo`, and `diffuse`.
 
-The reusable workflows do not run here or organization-wide. Builds, tests,
-deployments, releases, and notifications stay with the repository they serve.
-`Intuitumxyz/workflow` remains available only until its live consumers migrate.
+Shared workflows are opt-in. Build, test, deployment, and release automation
+remain with the repositories they serve.
