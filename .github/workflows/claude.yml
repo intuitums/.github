@@ -7,8 +7,8 @@ on:
     inputs:
       runs-on:
         description: Runner label for the Claude job.
+        required: true
         type: string
-        default: ubuntu-latest
     secrets:
       CLAUDE_CODE_OAUTH_TOKEN:
         description: Claude Code subscription OAuth token.

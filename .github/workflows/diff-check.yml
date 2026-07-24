@@ -1,0 +1,46 @@
+name: Diff check
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        description: Linux runner label for this job.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    name: Run
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Check changed-file hygiene
+        shell: bash
+        env:
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
+          PUSH_BEFORE_SHA: ${{ github.event.before || '' }}
+          PUSH_AFTER_SHA: ${{ github.event.after || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            git diff --check "$PR_BASE_SHA...$PR_HEAD_SHA"
+          elif [[ "$GITHUB_EVENT_NAME" == "push" ]] \
+            && [[ -n "$PUSH_BEFORE_SHA" ]] \
+            && [[ ! "$PUSH_BEFORE_SHA" =~ ^0+$ ]] \
+            && git cat-file -e "${PUSH_BEFORE_SHA}^{commit}" 2>/dev/null; then
+            git diff --check "$PUSH_BEFORE_SHA..$PUSH_AFTER_SHA"
+          elif git rev-parse "${GITHUB_SHA}^" >/dev/null 2>&1; then
+            git diff --check "${GITHUB_SHA}^..${GITHUB_SHA}"
+          else
+            git diff-tree --check --root -r "$GITHUB_SHA"
+          fi
