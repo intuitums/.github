@@ -2,7 +2,7 @@
 
 Shared GitHub defaults and automation for the Intuitum organization.
 
-- `default.json` is the shared Renovate preset: `github>Intuitumxyz/.github`.
+- `dependabot.yml` keeps shared workflow actions current.
 - `claude.yml` provides trusted-collaborator Claude automation.
 - `actions.yml` is this public repository's GitHub-hosted validation entrypoint.
 - `diff-check.yml`, `workflow-lint.yml`, and `secret-scan.yml` are narrow,
