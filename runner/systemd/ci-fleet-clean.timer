@@ -1,0 +1,10 @@
+# /etc/systemd/system/ci-fleet-clean.timer
+[Unit]
+Description=Run CI fleet cleanup weekly
+
+[Timer]
+OnCalendar=Sun *-*-* 04:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

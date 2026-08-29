@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+# Inspect and maintain the Intuitum GitHub Actions fleet on intuitumserver-1.
+#
+# Captured into git 2026-08-06. It had lived only on the box, and had rotted into a
+# no-op that reported success every week:
+#
+#   * `infra=/srv/infra` - a directory that does not exist. /srv/infra became /srv/ci,
+#     so every path `clean` touched resolved to nothing. Each one is wrapped in
+#     `2>/dev/null || true`, so the run exited 0 and the timer logged a clean pass.
+#     ci-fleet-clean.timer had been doing this weekly, last on 2026-08-02, exit 0.
+#   * The node_modules cache path was `cache/node_modules`; the directory is
+#     `cache/node-modules`. It would have missed even with the root corrected.
+#   * `managed_units()` matched `intuitum-box-`, a runner prefix that has never existed
+#     on this host - runners were `srv1-*` and are now `intuitum-<size>-ubuntu-2604-*`.
+#     So the managed list was always EMPTY: `status` filed the entire live fleet under
+#     "Legacy runners (remove after cutover)", and `restart` restarted nothing while
+#     printing "Restarted 0 managed runner service(s)."
+#   * `docker ... prune` ran against the ROOT daemon. Since 2026-07-29 that daemon runs
+#     the product runtimes under /srv/apps, and it has never held a CI image: the
+#     runners each have their own rootless daemon. It was pruning the one daemon it must
+#     not touch and never the seven that actually accumulate.
+#
+# The pattern in all four is the same one this box keeps producing - a path or prefix
+# written down once, renamed elsewhere, and never re-checked, on a host with no alerting
+# to notice. Where possible this version derives things instead of naming them.
+set -euo pipefail
+
+ci_root=/home/anvil
+runner_root="$ci_root/runners"
+cache_root="$ci_root/cache"
+
+all_units() {
+  systemctl list-unit-files 'actions.runner.*.service' --no-legend |
+    awk '{print $1}' |
+    sort
+}
+
+# Every actions.runner unit on this host is ours. There is no second fleet to tell apart,
+# and the prefix that used to try produced a permanently empty list.
+runner_units() { all_units; }
+
+# uid/user for a runner directory, so the rootless daemon can be addressed as its owner.
+runner_user() { stat -c %U "$1"; }
+
+jobs_running() {
+  pgrep -f 'Runner.Worker' >/dev/null 2>&1
+}
+
+# Run docker against ONE runner's rootless daemon. Never the root daemon: that one serves
+# the product runtimes in /srv/apps, and nothing here has any business pruning it.
+runner_docker() {
+  local user="$1"; shift
+  local uid
+  uid=$(id -u "$user")
+  sudo -u "$user" env \
+    XDG_RUNTIME_DIR="/run/user/$uid" \
+    DOCKER_HOST="unix:///run/user/$uid/docker.sock" \
+    docker "$@"
+}
+
+print_units() {
+  local heading="$1"
+  shift
+  printf '%s\n' "$heading"
+  local unit user state
+  for unit in "$@"; do
+    [ -n "$unit" ] || continue
+    user=$(systemctl show -p User --value "$unit")
+    state=$(systemctl is-active "$unit" 2>/dev/null || true)
+    printf '  %-70s %-14s %s\n' "$unit" "$user" "$state"
+  done
+}
+
+cmd_status() {
+  local governor low high
+  governor=$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || true)
+  low=$(awk 'BEGIN{m=1e9}{if($1<m)m=$1}END{if(m<1e9)printf "%.0f",m/1000}' /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null)
+  high=$(awk 'BEGIN{m=0}{if($1>m)m=$1}END{if(m>0)printf "%.0f",m/1000}' /sys/devices/system/cpu/cpu*/cpufreq/scaling_cur_freq 2>/dev/null)
+  printf 'Host         : %s\n' "$(hostname)"
+  printf 'CPU governor : %s\n' "${governor:-unknown}"
+  printf 'Clock (live) : %s-%s MHz across %s threads\n' "${low:-?}" "${high:-?}" "$(nproc)"
+  printf 'Load average : %s\n' "$(cut -d' ' -f1-3 /proc/loadavg)"
+  printf 'Memory       : %s\n' "$(free -h | awk '/Mem:/{print $3" used / "$2" total, "$7" available"}')"
+  printf 'Disk         : %s\n' "$(df -h / | awk 'NR==2{print $3" used / "$2" total, "$4" free"}')"
+  if jobs_running; then printf 'Jobs         : running\n'; else printf 'Jobs         : idle\n'; fi
+
+  mapfile -t units < <(runner_units)
+  print_units 'Runners:' "${units[@]}"
+
+  printf 'Rootless daemons:\n'
+  local d user
+  for d in "$runner_root"/*/; do
+    d=${d%/}
+    [ -d "$d" ] || continue
+    user=$(runner_user "$d")
+    printf '  %-14s %s\n' "$user" \
+      "$(runner_docker "$user" system df --format '{{.Type}}={{.Size}}' 2>/dev/null | paste -sd' ' - || echo unreachable)"
+  done
+}
+
+cmd_tune() {
+  sudo systemctl enable --now cpu-performance.service >/dev/null
+  printf 'Performance governor enabled. Per-runner MAKEFLAGS are managed in each .env by ansible.\n'
+}
+
+cmd_restart() {
+  if jobs_running; then
+    echo 'A GitHub Actions job is running; refusing to restart runner listeners.' >&2
+    exit 1
+  fi
+  local unit count=0
+  while IFS= read -r unit; do
+    [ -n "$unit" ] || continue
+    sudo systemctl restart "$unit"
+    count=$((count + 1))
+  done < <(runner_units)
+  printf 'Restarted %s runner service(s).\n' "$count"
+}
+
+cmd_clean() {
+  local days="${1:-14}"
+  if jobs_running; then
+    echo 'A GitHub Actions job is running; refusing workspace cleanup.' >&2
+    exit 1
+  fi
+
+  # cache/node-modules, with a hyphen. The old spelling used an underscore and matched
+  # nothing; ansible creates the hyphenated one.
+  if [ -d "$cache_root/node-modules" ]; then
+    find "$cache_root/node-modules" -maxdepth 1 -type f \
+      \( -name '*.tar' -o -name '*.tar.zst' -o -name '*.lock' \) \
+      -atime +"$days" -print -delete 2>/dev/null || true
+  else
+    echo "actions-fleet: $cache_root/node-modules is missing - not cleaning it" >&2
+  fi
+
+  local work d user
+  for work in "$runner_root"/*/_work; do
+    [ -d "$work" ] || continue
+    # Container jobs can leave trees owned by rootless subordinate uids and each runner
+    # has a different owner, so this bounded find runs as root.
+    sudo find "$work" -maxdepth 6 -type d -name node_modules -prune -exec rm -rf {} + 2>/dev/null || true
+  done
+
+  # Prune each runner's own daemon. These are where CI images and BuildKit cache
+  # accumulate - the container jobs that moved off Blacksmith build here.
+  for d in "$runner_root"/*/; do
+    d=${d%/}
+    [ -d "$d" ] || continue
+    user=$(runner_user "$d")
+    runner_docker "$user" image prune -f >/dev/null 2>&1 || true
+    runner_docker "$user" builder prune -f >/dev/null 2>&1 || true
+  done
+
+  printf 'Cleanup complete: %s\n' "$(df -h / | awk 'NR==2{print $3" used, "$4" free"}')"
+}
+
+case "${1:-status}" in
+  status) cmd_status ;;
+  tune) cmd_tune ;;
+  restart) cmd_restart ;;
+  clean) shift; cmd_clean "$@" ;;
+  *)
+    echo 'usage: actions-fleet {status|tune|restart|clean [days]}' >&2
+    exit 2
+    ;;
+esac

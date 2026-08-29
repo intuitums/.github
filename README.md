@@ -11,3 +11,7 @@ Shared GitHub defaults and automation for the Intuitum organization.
 
 Shared workflows are opt-in. Build, test, deployment, and release automation
 remain with the repositories they serve.
+
+The self-hosted runner fleet that serves the org is documented in
+[docs/fleet.md](docs/fleet.md), with its ops scripts under
+[`runner/`](runner/).

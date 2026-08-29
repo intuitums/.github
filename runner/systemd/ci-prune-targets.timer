@@ -1,0 +1,11 @@
+# /etc/systemd/system/ci-prune-targets.timer
+[Unit]
+Description=Prune CI cargo build caches roughly every two weeks
+
+[Timer]
+# First and third Sunday of each month, off-peak.
+OnCalendar=Sun *-*-1..7,15..21 04:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target
