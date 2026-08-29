@@ -1,17 +1,6 @@
 # Intuitum
 
-Shared GitHub defaults and automation for the Intuitum organization.
+Organization-level defaults: the security policy that repositories without
+their own `SECURITY.md` inherit, and the org security contact.
 
-- `dependabot.yml` keeps shared workflow actions current.
-- `claude.yml` provides trusted-collaborator Claude automation.
-- `actions.yml` is this public repository's GitHub-hosted validation entrypoint.
-- `diff-check.yml`, `workflow-lint.yml`, and `secret-scan.yml` are narrow,
-  reusable checks for `solo` and `leo`; empty `diffuse` can opt in when it has
-  source to check.
-
-Shared workflows are opt-in. Build, test, deployment, and release automation
-remain with the repositories they serve.
-
-The self-hosted runner fleet that serves the org is documented in
-[docs/fleet.md](docs/fleet.md), with its ops scripts under
-[`runner/`](runner/).
+Build, test, and release automation lives with the repositories it serves.

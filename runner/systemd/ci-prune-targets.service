@@ -1,7 +1,0 @@
-# /etc/systemd/system/ci-prune-targets.service
-[Unit]
-Description=Prune cargo build caches under CI runner work dirs
-
-[Service]
-Type=oneshot
-ExecStart=/home/anvil/fleet/bin/ci-prune-targets.sh

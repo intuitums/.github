@@ -1,8 +1,0 @@
-# /etc/systemd/system/ci-fleet-clean.service
-[Unit]
-Description=Weekly Actions runner fleet cleanup (caches, dangling images, idle _work)
-After=docker.service
-
-[Service]
-Type=oneshot
-ExecStart=/home/anvil/fleet/bin/actions-fleet clean
